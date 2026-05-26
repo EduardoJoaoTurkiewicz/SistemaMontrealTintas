@@ -378,7 +378,7 @@ export default function Sales() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 modern-shadow-xl">
           <div className="flex items-center gap-4">
             <div className="p-3 rounded-xl bg-green-600 modern-shadow-lg">
@@ -425,23 +425,6 @@ export default function Sales() {
               </p>
               <p className="text-sm text-orange-600 font-semibold">
                 {totals.pendingSales + totals.partialSales} venda(s)
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 modern-shadow-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-blue-600 modern-shadow-lg">
-              <User className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-blue-900 text-lg">Clientes Únicos</h3>
-              <p className="text-3xl font-black text-blue-700">
-                {new Set(deduplicatedSales.map(sale => sale.client)).size}
-              </p>
-              <p className="text-sm text-blue-600 font-semibold">
-                Clientes ativos
               </p>
             </div>
           </div>

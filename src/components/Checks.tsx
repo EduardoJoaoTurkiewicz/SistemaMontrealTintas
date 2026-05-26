@@ -60,10 +60,33 @@ export function Checks() {
   );
   const totalCompanyPayableChecks = companyPayableChecks.reduce((sum, check) => sum + check.value, 0);
 
-  // Group checks by sales and debts with filters
-  const salesWithChecks = sales.filter(sale => {
+  // All sales that have checks (used for both "a receber" and "depositados" sections)
+  const allSalesWithChecks = sales.filter(sale => {
     const saleChecks = checks.filter(check => check.saleId === sale.id);
-    if (saleChecks.length === 0) return false;
+    return saleChecks.length > 0;
+  }).map(sale => {
+    const saleChecks = checks.filter(check => check.saleId === sale.id);
+    const pendingCheckValue = saleChecks
+      .filter(check => check.status !== 'compensado')
+      .reduce((sum, check) => sum + check.value, 0);
+    const compensatedCount = saleChecks.filter(check => check.status === 'compensado').length;
+    const allCompensated = saleChecks.length > 0 && compensatedCount === saleChecks.length;
+    const someCompensated = compensatedCount > 0 && compensatedCount < saleChecks.length;
+    // Derived check status: use sale.status but also check check-level compensation
+    const checkStatus: 'pago' | 'parcial' | 'pendente' = allCompensated ? 'pago' : someCompensated ? 'parcial' : 'pendente';
+    return {
+      ...sale,
+      checks: saleChecks,
+      pendingCheckValue,
+      checkStatus,
+      allCompensated,
+    };
+  });
+
+  // "Cheques a Receber" — only sales where NOT all checks are compensated, with filters applied
+  const salesWithChecks = allSalesWithChecks.filter(sale => {
+    // Exclude fully compensated sales — they move to "Depositados"
+    if (sale.allCompensated) return false;
 
     // Apply receivable filters
     if (receivableFilters.client && !sale.client.toLowerCase().includes(receivableFilters.client.toLowerCase())) {
@@ -75,7 +98,7 @@ export function Checks() {
     if (receivableFilters.dateTo && sale.date > receivableFilters.dateTo) {
       return false;
     }
-    const totalValue = saleChecks.reduce((sum, check) => sum + check.value, 0);
+    const totalValue = sale.checks.reduce((sum, check) => sum + check.value, 0);
     if (receivableFilters.minValue && totalValue < parseFloat(receivableFilters.minValue)) {
       return false;
     }
@@ -83,10 +106,7 @@ export function Checks() {
       return false;
     }
     return true;
-  }).map(sale => ({
-    ...sale,
-    checks: checks.filter(check => check.saleId === sale.id)
-  }));
+  });
 
   const debtsWithChecks = debts.filter(debt => {
     const debtChecks = checks.filter(check => check.debtId === debt.id);
@@ -115,8 +135,8 @@ export function Checks() {
     checks: checks.filter(check => check.debtId === debt.id)
   }));
 
-  // Filter used checks
-  const usedChecksSales = salesWithChecks.filter(sale => {
+  // Filter used checks — use allSalesWithChecks so fully-compensated sales are still shown here
+  const usedChecksSales = allSalesWithChecks.filter(sale => {
     const usedChecks = sale.checks.filter(check => check.usedInDebt);
     if (usedChecks.length === 0) return false;
 
@@ -458,15 +478,18 @@ export function Checks() {
                     </div>
                     <div className="text-right">
                       <p className="text-xl font-bold text-green-600">
-                        R$ {sale.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        R$ {sale.pendingCheckValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-slate-500 mb-1">
+                        a receber em cheques
                       </p>
                       <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        sale.status === 'pago' ? 'bg-emerald-100 text-emerald-700' :
-                        sale.status === 'parcial' ? 'bg-yellow-100 text-yellow-700' :
+                        sale.checkStatus === 'pago' ? 'bg-emerald-100 text-emerald-700' :
+                        sale.checkStatus === 'parcial' ? 'bg-yellow-100 text-yellow-700' :
                         'bg-red-100 text-red-700'
                       }`}>
-                        {sale.status === 'pago' ? 'Pago' :
-                         sale.status === 'parcial' ? 'Parcial' : 'Pendente'}
+                        {sale.checkStatus === 'pago' ? 'Totalmente Recebida' :
+                         sale.checkStatus === 'parcial' ? 'Parcial' : 'Pendente'}
                       </span>
                     </div>
                   </div>
@@ -976,107 +999,164 @@ export function Checks() {
           </div>
         </div>
 
-        {discountedChecks.length > 0 ? (
-          <div className="space-y-4">
-            {salesWithChecks
-              .filter(sale => sale.checks.some(check => check.is_discounted || check.discount_date))
-              .map(sale => (
-                <div key={sale.id} className="border border-slate-200 rounded-2xl overflow-hidden">
-                  <div
-                    className="p-6 bg-gradient-to-r from-emerald-50 to-transparent hover:from-emerald-100 cursor-pointer transition-modern"
-                    onClick={() => {
-                      const newExpanded = new Set(expandedDiscounted);
-                      if (newExpanded.has(sale.id)) {
-                        newExpanded.delete(sale.id);
-                      } else {
-                        newExpanded.add(sale.id);
-                      }
-                      setExpandedDiscounted(newExpanded);
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <button className="p-2 rounded-lg bg-emerald-600 text-white modern-shadow">
-                          {expandedDiscounted.has(sale.id) ?
-                            <ChevronDown className="w-5 h-5" /> :
-                            <ChevronRight className="w-5 h-5" />
-                          }
-                        </button>
-                        <div>
-                          <h3 className="text-lg font-bold text-slate-900">{sale.client}</h3>
-                          <p className="text-sm text-slate-600">
-                            Data: {new Date(sale.date).toLocaleDateString('pt-BR')} •
-                            {sale.checks.filter(c => c.is_discounted || c.discount_date).length} cheque(s) antecipado(s)
+        {(() => {
+          // Show sales with discounted/anticipated checks AND fully-compensated sales
+          const depositedSales = allSalesWithChecks.filter(sale =>
+            sale.allCompensated ||
+            sale.checks.some(check => check.is_discounted || check.discount_date)
+          );
+          return depositedSales.length > 0 ? (
+            <div className="space-y-4">
+              {depositedSales.map(sale => {
+                const anticipatedChecks = sale.checks.filter(c => c.is_discounted || c.discount_date);
+                const compensatedChecks = sale.checks.filter(c => c.status === 'compensado' && !c.is_discounted && !c.discount_date);
+                const isFullyCompensated = sale.allCompensated;
+                const totalCompensatedValue = sale.checks
+                  .filter(c => c.status === 'compensado')
+                  .reduce((sum, c) => sum + c.value, 0);
+                return (
+                  <div key={sale.id} className="border border-slate-200 rounded-2xl overflow-hidden">
+                    <div
+                      className="p-6 bg-gradient-to-r from-emerald-50 to-transparent hover:from-emerald-100 cursor-pointer transition-modern"
+                      onClick={() => {
+                        const newExpanded = new Set(expandedDiscounted);
+                        if (newExpanded.has(sale.id)) {
+                          newExpanded.delete(sale.id);
+                        } else {
+                          newExpanded.add(sale.id);
+                        }
+                        setExpandedDiscounted(newExpanded);
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <button className="p-2 rounded-lg bg-emerald-600 text-white modern-shadow">
+                            {expandedDiscounted.has(sale.id) ?
+                              <ChevronDown className="w-5 h-5" /> :
+                              <ChevronRight className="w-5 h-5" />
+                            }
+                          </button>
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-900">{sale.client}</h3>
+                            <p className="text-sm text-slate-600">
+                              Data: {new Date(sale.date).toLocaleDateString('pt-BR')} •{' '}
+                              {sale.checks.filter(c => c.status === 'compensado' || c.is_discounted || c.discount_date).length} cheque(s) depositado(s)
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-emerald-600">
+                            R$ {totalCompensatedValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </p>
+                          {isFullyCompensated && (
+                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
+                              Totalmente Recebida
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {expandedDiscounted.has(sale.id) && (
-                    <div className="border-t border-slate-200 bg-white">
-                      <div className="p-6">
-                        <h4 className="font-semibold text-slate-900 mb-4">Cheques Antecipados</h4>
-                        <div className="space-y-3">
-                          {sale.checks
-                            .filter(check => check.is_discounted || check.discount_date)
-                            .map(check => (
-                              <div key={check.id} className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-                                <div className="flex justify-between items-start">
-                                  <div>
-                                    <span className="font-medium text-slate-900">{check.client}</span>
-                                    <div className="text-sm text-slate-600 mt-1">
-                                      Parcela {check.installmentNumber}/{check.totalInstallments}
-                                    </div>
-                                    <div className="text-sm text-slate-600">
-                                      Vencimento Original: {new Date(check.dueDate).toLocaleDateString('pt-BR')}
-                                    </div>
-                                    {check.discount_date && (
-                                      <div className="text-sm text-emerald-600 font-semibold">
-                                        Antecipado em: {new Date(check.discount_date).toLocaleDateString('pt-BR')}
+                    {expandedDiscounted.has(sale.id) && (
+                      <div className="border-t border-slate-200 bg-white">
+                        <div className="p-6 space-y-4">
+                          {compensatedChecks.length > 0 && (
+                            <div>
+                              <h4 className="font-semibold text-slate-900 mb-3">Cheques Compensados</h4>
+                              <div className="space-y-3">
+                                {compensatedChecks.map(check => (
+                                  <div key={check.id} className="p-4 bg-green-50 rounded-xl border border-green-200">
+                                    <div className="flex justify-between items-start">
+                                      <div>
+                                        <span className="font-medium text-slate-900">{check.client}</span>
+                                        <div className="text-sm text-slate-600 mt-1">
+                                          Parcela {check.installmentNumber}/{check.totalInstallments}
+                                        </div>
+                                        <div className="text-sm text-slate-600">
+                                          Vencimento: {new Date(check.dueDate).toLocaleDateString('pt-BR')}
+                                        </div>
+                                        {check.paymentDate && (
+                                          <div className="text-sm text-green-600 font-semibold">
+                                            Compensado em: {new Date(check.paymentDate).toLocaleDateString('pt-BR')}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-sm text-slate-600">Valor Original:</div>
-                                    <span className="font-medium text-slate-900">
-                                      R$ {check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                                    </span>
-                                    {check.discounted_amount && (
-                                      <>
-                                        <div className="text-sm text-emerald-600 font-bold mt-1">Valor Recebido:</div>
-                                        <span className="font-bold text-emerald-600">
-                                          R$ {check.discounted_amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                      <div className="text-right">
+                                        <span className="font-bold text-green-700">
+                                          R$ {check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                         </span>
-                                      </>
-                                    )}
-                                    {check.discount_fee && check.discount_fee > 0 && (
-                                      <div className="text-xs text-red-600 mt-1">
-                                        Taxa: R$ {check.discount_fee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                        <div className="text-xs text-green-600 font-semibold mt-1">Compensado ✓</div>
                                       </div>
-                                    )}
+                                    </div>
                                   </div>
-                                </div>
+                                ))}
                               </div>
-                            ))
-                          }
+                            </div>
+                          )}
+
+                          {anticipatedChecks.length > 0 && (
+                            <div>
+                              <h4 className="font-semibold text-slate-900 mb-3">Cheques Antecipados</h4>
+                              <div className="space-y-3">
+                                {anticipatedChecks.map(check => (
+                                  <div key={check.id} className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                                    <div className="flex justify-between items-start">
+                                      <div>
+                                        <span className="font-medium text-slate-900">{check.client}</span>
+                                        <div className="text-sm text-slate-600 mt-1">
+                                          Parcela {check.installmentNumber}/{check.totalInstallments}
+                                        </div>
+                                        <div className="text-sm text-slate-600">
+                                          Vencimento Original: {new Date(check.dueDate).toLocaleDateString('pt-BR')}
+                                        </div>
+                                        {check.discount_date && (
+                                          <div className="text-sm text-emerald-600 font-semibold">
+                                            Antecipado em: {new Date(check.discount_date).toLocaleDateString('pt-BR')}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="text-right">
+                                        <div className="text-sm text-slate-600">Valor Original:</div>
+                                        <span className="font-medium text-slate-900">
+                                          R$ {check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                        </span>
+                                        {check.discounted_amount && (
+                                          <>
+                                            <div className="text-sm text-emerald-600 font-bold mt-1">Valor Recebido:</div>
+                                            <span className="font-bold text-emerald-600">
+                                              R$ {check.discounted_amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                            </span>
+                                          </>
+                                        )}
+                                        {check.discount_fee && check.discount_fee > 0 && (
+                                          <div className="text-xs text-red-600 mt-1">
+                                            Taxa: R$ {check.discount_fee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))
-            }
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <CheckCircle className="w-16 h-16 mx-auto mb-4 text-emerald-300" />
-            <p className="text-emerald-600 font-medium">Nenhum cheque antecipado ainda</p>
-            <p className="text-emerald-500 text-sm mt-2">
-              Cheques antecipados aparecerão aqui
-            </p>
-          </div>
-        )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <CheckCircle className="w-16 h-16 mx-auto mb-4 text-emerald-300" />
+              <p className="text-emerald-600 font-medium">Nenhum cheque depositado ou antecipado ainda</p>
+              <p className="text-emerald-500 text-sm mt-2">
+                Cheques compensados e antecipados aparecerão aqui
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Cheques Avulsos */}
