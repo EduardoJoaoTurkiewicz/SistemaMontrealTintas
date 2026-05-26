@@ -146,21 +146,38 @@ export class StatusCalculationService {
   }
 
   /**
-   * Derives a display-friendly three-state status for debts.
-   * The debt schema only stores is_paid (boolean), but we can compute a richer
-   * status from paid_amount vs total_value for display purposes.
+   * Derives a display-friendly four-state status for debts.
+   * Priority: pago > vencido > parcial > pendente
+   * "vencido" means at least one unpaid installment is past its due date.
    */
-  static deriveDebtDisplayStatus(debt: {
-    isPaid?: boolean;
-    paidAmount?: number;
-    pendingAmount?: number;
-    totalValue?: number;
-  }): 'pago' | 'parcial' | 'pendente' {
+  static deriveDebtDisplayStatus(
+    debt: {
+      id?: string;
+      isPaid?: boolean;
+      paidAmount?: number;
+      pendingAmount?: number;
+      totalValue?: number;
+    },
+    checks: Check[] = [],
+    boletos: Boleto[] = []
+  ): 'pago' | 'vencido' | 'parcial' | 'pendente' {
     const total = safeNumber(debt.totalValue, 0);
     const paid = safeNumber(debt.paidAmount, 0);
     const pending = safeNumber(debt.pendingAmount, total);
 
     if (debt.isPaid || pending <= 0.01) return 'pago';
+
+    // Check for overdue unpaid installments using today's date
+    const today = new Date().toISOString().split('T')[0];
+    if (debt.id) {
+      const debtChecks = checks.filter(c => c.debtId === debt.id);
+      const debtBoletos = boletos.filter(b => b.debtId === debt.id);
+      const hasOverdue =
+        debtChecks.some(c => c.status !== 'compensado' && c.dueDate < today) ||
+        debtBoletos.some(b => b.status !== 'compensado' && b.dueDate < today);
+      if (hasOverdue) return 'vencido';
+    }
+
     if (paid > 0.01) return 'parcial';
     return 'pendente';
   }
