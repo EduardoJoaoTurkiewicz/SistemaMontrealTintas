@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
 import { supabaseServices, enhancedSupabaseServices } from '../lib/supabaseServices';
 import { enhancedSyncManager } from '../lib/enhancedSyncManager';
 import { getOfflineDataEnhanced, mergeOnlineOfflineDataEnhanced } from '../lib/enhancedOfflineStorage';
@@ -200,6 +201,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({});
   const [lastLoadTime, setLastLoadTime] = useState<Record<string, number>>({});
   const isLoadingAllDataRef = useRef(false);
+  // Layer 1 guard: prevents concurrent updateCheck calls for the same check id
+  const processingCheckIds = useRef(new Set<string>());
 
   // Navigation function - can be set by App component
   const [_navigateFn, _setNavigateFn] = useState<(page: string) => void>(() => () => {});
@@ -632,8 +635,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   };
 
   const updateCheck = async (checkData: any) => {
+    const { id, ...updateData } = checkData;
+    // Layer 1 guard: abort if already processing this check to prevent double-clicks
+    if (processingCheckIds.current.has(id)) {
+      console.warn('⚠️ updateCheck already in progress for id:', id);
+      return;
+    }
+    processingCheckIds.current.add(id);
     try {
-      const { id, ...updateData } = checkData;
       const oldCheck = checks.find(c => c.id === id);
       const result = await supabaseServices.checks.update(id, updateData);
 
@@ -673,6 +682,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     } catch (err) {
       console.error('Error updating check:', err);
       throw err;
+    } finally {
+      processingCheckIds.current.delete(id);
     }
   };
 
@@ -1136,6 +1147,28 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  // Real-time subscription: update sale status badges without full page reload
+  useEffect(() => {
+    const channel = supabase
+      .channel('sales-status-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'sales' },
+        (payload) => {
+          const updated = payload.new as any;
+          if (!updated?.id) return;
+          setSales(prev =>
+            prev.map(s => s.id === updated.id ? { ...s, ...updated } : s)
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
   }, []);
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, CreditCard as Edit, Trash2, Eye, FileText, DollarSign, Calendar, AlertCircle, X, Building2, CreditCard, Clock, CheckCircle, ChevronDown, ChevronRight, Zap, Filter } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useAppContext } from '../context/AppContext';
 import { Check } from '../types';
 import { CheckForm } from './forms/CheckForm';
@@ -19,6 +20,8 @@ export function Checks() {
   const [showReceivableFilters, setShowReceivableFilters] = useState(false);
   const [showPayableFilters, setShowPayableFilters] = useState(false);
   const [showUsedFilters, setShowUsedFilters] = useState(false);
+  // Layer 1 UI guard: tracks which check ids are currently being processed
+  const [processingCheckIds, setProcessingCheckIds] = useState<Set<string>>(new Set());
   const [receivableFilters, setReceivableFilters] = useState({
     client: '',
     dateFrom: '',
@@ -184,6 +187,38 @@ export function Checks() {
         alert('Erro ao excluir cheque: ' + error.message);
       });
     }
+  };
+
+  // Shared handler for compensating any check (sales or debt)
+  const handleCompensateCheck = (check: Check, confirmMessage: string, successMessage: string) => {
+    if (processingCheckIds.has(check.id)) return;
+    if (!window.confirm(confirmMessage)) return;
+
+    // Layer 1: disable button immediately
+    setProcessingCheckIds(prev => new Set(prev).add(check.id));
+
+    const updatedCheck = {
+      ...check,
+      status: 'compensado' as const,
+      paymentDate: getCurrentDateString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    updateCheck({ ...updatedCheck, id: check.id })
+      .then(() => {
+        toast.success(successMessage);
+      })
+      .catch((error: Error) => {
+        toast.error('Erro: ' + error.message);
+        // Re-enable button only on error
+        setProcessingCheckIds(prev => {
+          const next = new Set(prev);
+          next.delete(check.id);
+          return next;
+        });
+      });
+    // On success, leave the id in processingCheckIds — the check row will re-render
+    // as 'compensado' and the button will be hidden, so there's no need to remove it.
   };
 
   const toggleSaleExpansion = (saleId: string) => {
@@ -538,24 +573,15 @@ export function Checks() {
                                 {check.status === 'pendente' && !check.usedInDebt && (
                                   <div className="mt-2">
                                     <button
-                                      onClick={() => {
-                                        const confirmMessage = `Marcar este cheque como compensado?\n\nValor: R$ ${check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\nEste valor será adicionado ao caixa da empresa.`;
-
-                                        if (window.confirm(confirmMessage)) {
-                                          const updatedCheck = {
-                                            ...check,
-                                            status: 'compensado' as const,
-                                            paymentDate: getCurrentDateString(),
-                                            updatedAt: new Date().toISOString()
-                                          };
-                                          updateCheck({ ...updatedCheck, id: check.id }).catch(error => {
-                                            alert('Erro ao marcar como compensado: ' + error.message);
-                                          });
-                                        }
-                                      }}
-                                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-xs"
+                                      disabled={processingCheckIds.has(check.id)}
+                                      onClick={() => handleCompensateCheck(
+                                        check,
+                                        `Marcar este cheque como compensado?\n\nValor: R$ ${check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\nEste valor será adicionado ao caixa da empresa.`,
+                                        'Cheque marcado como compensado!'
+                                      )}
+                                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                      Marcar como Compensado
+                                      {processingCheckIds.has(check.id) ? 'Processando...' : 'Marcar como Compensado'}
                                     </button>
                                   </div>
                                 )}
@@ -713,11 +739,24 @@ export function Checks() {
                       <p className="text-xl font-bold text-orange-600">
                         R$ {debt.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </p>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        debt.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {debt.isPaid ? 'Pago' : 'Pendente'}
-                      </span>
+                      {(() => {
+                        const compensated = debt.checks.filter((c: any) => c.status === 'compensado').length;
+                        const total = debt.checks.length;
+                        const debtStatus = debt.isPaid || compensated === total
+                          ? 'pago'
+                          : compensated > 0
+                          ? 'parcial'
+                          : 'pendente';
+                        return (
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            debtStatus === 'pago' ? 'bg-emerald-100 text-emerald-700' :
+                            debtStatus === 'parcial' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            {debtStatus === 'pago' ? 'Pago' : debtStatus === 'parcial' ? 'Parcial' : 'Pendente'}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -755,24 +794,15 @@ export function Checks() {
                                 {check.status === 'pendente' && (
                                   <div className="mt-2">
                                     <button
-                                      onClick={() => {
-                                        const confirmMessage = `Marcar este cheque como pago?\n\nValor: R$ ${check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\nEste valor será descontado do caixa da empresa.`;
-                                        
-                                        if (window.confirm(confirmMessage)) {
-                                          const updatedCheck = { 
-                                            ...check, 
-                                            status: 'compensado' as const,
-                                            paymentDate: getCurrentDateString(),
-                                            updatedAt: new Date().toISOString()
-                                          };
-                                          updateCheck({ ...updatedCheck, id: check.id }).catch(error => {
-                                            alert('Erro ao marcar como pago: ' + error.message);
-                                          });
-                                        }
-                                      }}
-                                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-xs"
+                                      disabled={processingCheckIds.has(check.id)}
+                                      onClick={() => handleCompensateCheck(
+                                        check,
+                                        `Marcar este cheque como pago?\n\nValor: R$ ${check.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n\nEste valor será descontado do caixa da empresa.`,
+                                        'Cheque marcado como pago!'
+                                      )}
+                                      className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                      Marcar como Pago
+                                      {processingCheckIds.has(check.id) ? 'Processando...' : 'Marcar como Pago'}
                                     </button>
                                   </div>
                                 )}
