@@ -53,7 +53,9 @@ function PaySalaryModal({ employee, advances, overtimes, commissions, onConfirm,
   const totalCommissions = monthCommissions.reduce((sum, c) => sum + c.commissionAmount, 0);
 
   const base = employee.isSeller ? totalCommissions : employee.salary;
-  const finalAmount = base - totalAdvances + totalOvertimes;
+  // Advances are deductions (not additions). Overtimes are additions.
+  const grossAmount = base + totalOvertimes;
+  const finalAmount = grossAmount - totalAdvances;
 
   const monthLabel = now.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
@@ -94,9 +96,12 @@ function PaySalaryModal({ employee, advances, overtimes, commissions, onConfirm,
 
           <div className="space-y-2">
             {employee.isSeller ? (
-              <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-xl">
-                <span className="text-sm text-slate-600">Comissões do mês</span>
-                <span className="text-sm font-bold text-slate-800">{safeCurrency(totalCommissions)}</span>
+              <div className="flex items-center justify-between py-2.5 px-3 bg-yellow-50 rounded-xl border border-yellow-200">
+                <div>
+                  <span className="text-sm font-semibold text-yellow-800">Comissões do mês</span>
+                  <p className="text-xs text-yellow-600">{monthCommissions.length} comissão(ões)</p>
+                </div>
+                <span className="text-sm font-bold text-yellow-900">{safeCurrency(totalCommissions)}</span>
               </div>
             ) : (
               <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-xl">
@@ -105,20 +110,36 @@ function PaySalaryModal({ employee, advances, overtimes, commissions, onConfirm,
               </div>
             )}
 
-            <div className="flex items-center justify-between py-2.5 px-3 bg-red-50 rounded-xl">
-              <span className="text-sm text-red-600">− Adiantamentos ({monthAdvances.length})</span>
+            {totalOvertimes > 0 && (
+              <div className="flex items-center justify-between py-2.5 px-3 bg-blue-50 rounded-xl border border-blue-200">
+                <div>
+                  <span className="text-sm font-semibold text-blue-800">+ Horas extras</span>
+                  <p className="text-xs text-blue-600">{monthOvertimes.length} registro(s)</p>
+                </div>
+                <span className="text-sm font-bold text-blue-700">+{safeCurrency(totalOvertimes)}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between py-2.5 px-3 bg-slate-50 rounded-xl border border-slate-200">
+              <span className="text-sm text-slate-600 font-semibold">Bruto a receber</span>
+              <span className="text-sm font-bold text-slate-800">{safeCurrency(grossAmount)}</span>
+            </div>
+
+            <div className="flex items-center justify-between py-2.5 px-3 bg-red-50 rounded-xl border border-red-200">
+              <div>
+                <span className="text-sm font-semibold text-red-700">− Adiantamentos descontados</span>
+                <p className="text-xs text-red-500">{monthAdvances.length} adiantamento(s) do mês</p>
+              </div>
               <span className="text-sm font-bold text-red-700">−{safeCurrency(totalAdvances)}</span>
             </div>
 
-            <div className="flex items-center justify-between py-2.5 px-3 bg-blue-50 rounded-xl">
-              <span className="text-sm text-blue-600">+ Horas extras ({monthOvertimes.length})</span>
-              <span className="text-sm font-bold text-blue-700">+{safeCurrency(totalOvertimes)}</span>
-            </div>
-
-            <div className="border-t border-slate-200 pt-3">
+            <div className="border-t-2 border-slate-300 pt-3">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-slate-700">Valor final</span>
-                <span className={`text-xl font-black ${finalAmount < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                <div>
+                  <span className="font-semibold text-slate-700">Valor líquido a pagar</span>
+                  <p className="text-xs text-slate-500">Bruto − Adiantamentos</p>
+                </div>
+                <span className={`text-xl font-black ${finalAmount < 0 ? 'text-red-600' : 'text-green-700'}`}>
                   {safeCurrency(finalAmount)}
                 </span>
               </div>
@@ -434,6 +455,11 @@ export function Employees() {
                       <p className="text-sm text-yellow-600">
                         Pendente: {safeCurrency(pendingCommissions)}
                       </p>
+                      {totalAdvances > 0 && (
+                        <p className="text-xs text-red-600 font-semibold mt-1 border-t border-yellow-200 pt-1">
+                          Líquido: {safeCurrency(Math.max(0, totalCommissions - totalAdvances))}
+                        </p>
+                      )}
                     </div>
                   )}
                   
@@ -503,17 +529,39 @@ export function Employees() {
                     {/* Recent Payments */}
                     <div>
                       <h5 className="font-semibold text-slate-800 mb-3">Últimos Pagamentos</h5>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {payments.slice(0, 3).map(payment => (
-                          <div key={payment.id} className="p-3 bg-green-50 rounded-lg border border-green-200">
-                            <div className="flex justify-between items-center">
-                              <span className="text-sm text-green-700">
-                                {formatDateForDisplay(payment.paymentDate)}
-                              </span>
-                              <span className="font-bold text-green-800">{safeCurrency(payment.amount)}</span>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {payments.slice(0, 5).map(payment => {
+                          const typeColors: Record<string, string> = {
+                            salario: 'bg-green-100 text-green-700 border-green-200',
+                            adiantamento: 'bg-orange-100 text-orange-700 border-orange-200',
+                            comissao: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+                            bonus: 'bg-blue-100 text-blue-700 border-blue-200',
+                            hora_extra: 'bg-cyan-100 text-cyan-700 border-cyan-200',
+                            outro: 'bg-slate-100 text-slate-700 border-slate-200',
+                          };
+                          const typeLabels: Record<string, string> = {
+                            salario: 'Salário',
+                            adiantamento: 'Adiantamento',
+                            comissao: 'Comissão',
+                            bonus: 'Bônus',
+                            hora_extra: 'Hora Extra',
+                            outro: 'Outro',
+                          };
+                          const pType = payment.paymentType || 'salario';
+                          const colorClass = typeColors[pType] || typeColors.outro;
+                          const label = typeLabels[pType] || 'Pagamento';
+                          return (
+                            <div key={payment.id} className={`p-3 rounded-lg border ${colorClass}`}>
+                              <div className="flex justify-between items-center">
+                                <div>
+                                  <span className="text-xs font-bold uppercase tracking-wide">{label}</span>
+                                  <p className="text-xs opacity-75">{formatDateForDisplay(payment.paymentDate)}</p>
+                                </div>
+                                <span className="font-bold">{safeCurrency(payment.amount)}</span>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                         {payments.length === 0 && (
                           <p className="text-sm text-slate-500 italic">Nenhum pagamento registrado</p>
                         )}
@@ -651,6 +699,7 @@ export function Employees() {
               amount,
               paymentDate: getCurrentDateString(),
               isPaid: true,
+              paymentType: paySalaryEmployee.isSeller ? 'comissao' : 'salario',
               observations: obs,
             };
             await createEmployeePayment(paymentData);

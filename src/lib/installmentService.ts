@@ -99,50 +99,29 @@ export class InstallmentService {
     console.log(`✅ All ${installments} boletos created for sale ${saleId}`);
   }
 
-  // Create acerto for sale payment method
-  static async createAcertoForSale(client: string, paymentMethod: any): Promise<void> {
+  // Create acerto for sale payment method.
+  // clienteId: the registered customer's UUID (required for acerto payment).
+  // client: the customer's display name.
+  static async createAcertoForSale(client: string, paymentMethod: any, clienteId?: string | null): Promise<void> {
     if (paymentMethod.type !== 'acerto') return;
 
     const amount = safeNumber(paymentMethod.amount, 0);
     if (amount <= 0) return;
 
-    // Determine the target client name for the acerto
-    // If acertoClientName is '__novo__' or empty, use the client parameter
-    // Otherwise, use the selected acertoClientName
-    let targetClientName = client;
+    const normalizedClient = client.trim().toLowerCase();
+    console.log(`🔄 Processing acerto for client: "${client}" (id: ${clienteId ?? 'none'}), amount: ${amount}`);
 
-    if (paymentMethod.acertoClientName) {
-      if (paymentMethod.acertoClientName === '__novo__') {
-        // User explicitly wants to create a new acerto with the client's name
-        targetClientName = client;
-        console.log(`🔄 User selected to create NEW acerto for client: ${client}, amount: ${amount}`);
-      } else {
-        // User selected an existing acerto group
-        targetClientName = paymentMethod.acertoClientName;
-        console.log(`🔄 User selected EXISTING acerto group: ${targetClientName}, adding amount: ${amount}`);
-      }
-    } else {
-      // No acertoClientName provided (shouldn't happen with validation, but fallback to client)
-      console.warn(`⚠️ No acertoClientName provided, using client name: ${client}`);
-    }
-
-    // Normalize the target client name for comparison (trim and lowercase)
-    const normalizedTarget = targetClientName.trim().toLowerCase();
-
-    console.log(`🔄 Processing acerto for target: "${targetClientName}" (normalized: "${normalizedTarget}"), amount: ${amount}`);
-
-    // Check if acerto already exists for this client
     try {
       const existingAcertos = await supabaseServices.acertos.getAcertos();
 
-      // Find existing acerto by normalized name comparison
+      // Match by clienteId first (most reliable), fall back to name comparison
       const existingAcerto = existingAcertos.find(a => {
-        const normalizedAcertoName = a.clientName.trim().toLowerCase();
-        return normalizedAcertoName === normalizedTarget && a.type === 'cliente';
+        if (a.type !== 'cliente') return false;
+        if (clienteId && a.clienteId) return a.clienteId === clienteId;
+        return a.clientName.trim().toLowerCase() === normalizedClient;
       });
 
       if (existingAcerto) {
-        // Update existing acerto
         const updatedAcerto = {
           ...existingAcerto,
           totalAmount: existingAcerto.totalAmount + amount,
@@ -152,25 +131,25 @@ export class InstallmentService {
         };
 
         await supabaseServices.acertos.update(existingAcerto.id!, updatedAcerto);
-        console.log(`✅ Acerto UPDATED for client "${existingAcerto.clientName}" - New total: R$ ${updatedAcerto.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}, Pending: R$ ${updatedAcerto.pendingAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
+        console.log(`✅ Acerto UPDATED for client "${existingAcerto.clientName}" - New total: R$ ${updatedAcerto.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
       } else {
-        // Create new acerto (only when __novo__ is selected or no acerto exists)
         const acertoData = {
           id: UUIDManager.generateUUID(),
-          clientName: targetClientName,
+          clientName: client,
+          clienteId: clienteId ?? undefined,
           type: 'cliente' as const,
           totalAmount: amount,
           paidAmount: 0,
           pendingAmount: amount,
           status: 'pendente' as const,
-          observations: `Acerto criado automaticamente para vendas de ${targetClientName}`
+          observations: `Acerto criado automaticamente para vendas de ${client}`
         };
 
         await supabaseServices.acertos.create(acertoData);
-        console.log(`✅ NEW acerto CREATED for client "${targetClientName}" - Total: R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
+        console.log(`✅ NEW acerto CREATED for client "${client}" - Total: R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
       }
     } catch (error) {
-      console.error(`❌ Error creating/updating acerto for client ${targetClientName}:`, error);
+      console.error(`❌ Error creating/updating acerto for client ${client}:`, error);
       throw error;
     }
   }
@@ -365,7 +344,7 @@ export class InstallmentService {
   }
 
   // Process all installments for a sale
-  static async processInstallmentsForSale(saleId: string, client: string, paymentMethods: any[]): Promise<void> {
+  static async processInstallmentsForSale(saleId: string, client: string, paymentMethods: any[], clienteId?: string | null): Promise<void> {
     console.log(`🔄 Processing installments for sale ${saleId}, client: ${client}`);
 
     for (const method of paymentMethods) {
@@ -400,9 +379,9 @@ export class InstallmentService {
           }
         }
 
-        // Handle acertos
+        // Handle acertos — pass clienteId for reliable linking
         if (method.type === 'acerto') {
-          await this.createAcertoForSale(client, method);
+          await this.createAcertoForSale(client, method, clienteId);
         }
 
         // Handle permutas - update consumed value

@@ -794,17 +794,35 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const createEmployeeAdvance = async (advanceData: any) => {
     try {
       const result = await supabaseServices.employeeAdvances.create(advanceData);
-      
-      // Refresh employee advances and cash data
+
+      // Also create a corresponding employee_payments record so the advance
+      // appears immediately in "Últimos Pagamentos" with type 'adiantamento'.
+      try {
+        await supabaseServices.employeePayments.create({
+          employeeId: advanceData.employeeId,
+          amount: advanceData.amount,
+          paymentDate: advanceData.date,
+          isPaid: true,
+          paymentType: 'adiantamento',
+          observations: advanceData.description || 'Adiantamento'
+        });
+      } catch (paymentErr) {
+        console.error('Error creating payment record for advance:', paymentErr);
+        // Non-fatal — advance itself was saved
+      }
+
+      // Refresh employee advances, payments, and cash data
       const advancesData = await supabaseServices.employeeAdvances.getAdvances();
       setEmployeeAdvances(advancesData || []);
-      
+      const paymentsData = await supabaseServices.employeePayments.getPayments();
+      setEmployeePayments(paymentsData || []);
+
       // Refresh cash data since advance affects cash
       const balanceData = await supabaseServices.cashBalance.getCurrentBalance();
       setCashBalance(balanceData);
       const transactionsData = await supabaseServices.cashTransactions.getTransactions();
       setCashTransactions(transactionsData || []);
-      
+
       return result;
     } catch (err) {
       console.error('Error creating employee advance:', err);

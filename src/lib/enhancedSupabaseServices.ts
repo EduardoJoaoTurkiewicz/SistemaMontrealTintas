@@ -186,7 +186,7 @@ export const enhancedSalesService = {
       // Process installments after sale creation
       try {
         const { InstallmentService } = await import('./installmentService');
-        await InstallmentService.processInstallmentsForSale(returnedSaleId, sanitizedSale.client, sanitizedSale.paymentMethods || []);
+        await InstallmentService.processInstallmentsForSale(returnedSaleId, sanitizedSale.client, sanitizedSale.paymentMethods || [], sanitizedSale.cliente_id ?? null);
         console.log('✅ Installments processed successfully for sale:', returnedSaleId);
       } catch (installmentError) {
         console.error('❌ Error processing installments for sale:', installmentError);

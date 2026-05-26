@@ -185,7 +185,7 @@ export function Acertos() {
     return (
       <div className="flex items-center justify-center min-h-96">
         <div className="text-center">
-          <div className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+          <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
             <Clock className="w-8 h-8 text-white" />
           </div>
           <p className="text-slate-600 font-semibold">Carregando acertos...</p>
@@ -198,12 +198,12 @@ export function Acertos() {
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex items-center gap-4">
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-600 to-purple-700 shadow-xl floating-animation">
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-700 shadow-xl floating-animation">
             <Clock className="w-8 h-8 text-white" />
           </div>
           <div>
             <h1 className="text-3xl font-bold text-slate-900">Gestão de Acertos</h1>
-            <p className="text-slate-600 text-lg">Controle de pagamentos mensais de clientes e empresas</p>
+            <p className="text-slate-600 text-lg">Pagamentos mensais de clientes e negociações com fornecedores</p>
           </div>
         </div>
         <button
@@ -211,7 +211,7 @@ export function Acertos() {
           className="btn-primary flex items-center gap-2 modern-shadow-xl hover:modern-shadow-lg"
         >
           <Plus className="w-5 h-5" />
-          Novo Acerto
+          Novo Acerto de Empresa
         </button>
       </div>
 
@@ -637,10 +637,11 @@ export function Acertos() {
         )}
       </div>
 
-      {/* Acerto Form Modal */}
+      {/* Acerto Form Modal — only for empresa type (new) or editing any type */}
       {(isFormOpen || editingAcerto) && (
         <AcertoForm
           acerto={editingAcerto}
+          defaultType={isFormOpen && !editingAcerto ? 'empresa' : undefined}
           onSubmit={editingAcerto ? handleEditAcerto : handleAddAcerto}
           onCancel={() => {
             setIsFormOpen(false);

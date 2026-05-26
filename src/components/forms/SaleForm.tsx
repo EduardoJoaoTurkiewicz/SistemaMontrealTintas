@@ -73,13 +73,8 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
     );
   }, [permutas]);
 
-  const clientesComAcerto = useMemo(() => {
-    const clientSet = new Set<string>();
-    acertos.filter(acerto => acerto.type === 'cliente').forEach(acerto => {
-      clientSet.add(acerto.clientName);
-    });
-    return Array.from(clientSet).sort();
-  }, [acertos]);
+  // Acerto requires a registered client — check if currently selected client is registered
+  const clienteRegistradoSelecionado = clienteSelecionado !== null;
 
   const totalItens = useMemo(() =>
     saleItems.reduce((sum, item) => sum + item.quantidade * item.valorUnitario, 0),
@@ -392,15 +387,9 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
       }
 
       if (method.type === 'acerto') {
-        if (!method.acertoClientName || method.acertoClientName.trim() === '') {
-          alert('Por favor, selecione um grupo de acerto.');
+        if (!clienteRegistradoSelecionado) {
+          alert('O método "Acerto" só pode ser usado com clientes cadastrados na aba Clientes. Selecione um cliente registrado.');
           return;
-        }
-        if (method.acertoClientName === '__novo__') {
-          if (!formData.client || formData.client.trim() === '') {
-            alert('Por favor, informe o nome do cliente para criar um novo grupo de acerto.');
-            return;
-          }
         }
       }
     }
@@ -484,6 +473,7 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
       date: parseInputDate(formData.date),
       totalValue: safeNumber(formData.totalValue, 0),
       sellerId: sellerId,
+      clienteId: clienteSelecionado?.id ?? null,
       deliveryDate: deliveryDate,
       paymentMethods: cleanedPaymentMethods,
       observations: cleanedObservations,
@@ -928,30 +918,34 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
 
                         {method.type === 'acerto' && (
                           <div className="md:col-span-2">
-                            <div className="p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border-2 border-blue-300">
-                              <h4 className="font-bold text-blue-900 mb-3">Acerto (Pagamento Mensal)</h4>
-                              <select
-                                value={method.acertoClientName || ''}
-                                onChange={(e) => {
-                                  updatePaymentMethod(index, 'acertoClientName', e.target.value);
-                                  if (e.target.value !== '__novo__' && e.target.value !== '' && (!formData.client || formData.client.trim() === '')) {
-                                    setFormData(prev => ({ ...prev, client: e.target.value }));
-                                  }
-                                }}
-                                className="input-field bg-white border-2 border-blue-300 focus:border-blue-500"
-                                required
-                              >
-                                <option value="">Selecione uma opcao...</option>
-                                {clientesComAcerto.length > 0 && (
-                                  <optgroup label="Clientes Existentes">
-                                    {clientesComAcerto.map(cliente => (
-                                      <option key={cliente} value={cliente}>{cliente}</option>
-                                    ))}
-                                  </optgroup>
-                                )}
-                                <option value="__novo__">Novo Cliente (criar novo grupo)</option>
-                              </select>
-                            </div>
+                            {clienteRegistradoSelecionado ? (
+                              <div className="p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border-2 border-blue-300">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-blue-600 rounded-lg flex-shrink-0">
+                                    <User className="w-4 h-4 text-white" />
+                                  </div>
+                                  <div>
+                                    <h4 className="font-bold text-blue-900">Acerto vinculado a:</h4>
+                                    <p className="text-blue-700 font-semibold">{formData.client}</p>
+                                    <p className="text-xs text-blue-600 mt-0.5">
+                                      A venda será automaticamente registrada no histórico de acertos deste cliente.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="p-4 bg-amber-50 rounded-xl border-2 border-amber-300">
+                                <div className="flex items-start gap-3">
+                                  <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                                  <div>
+                                    <h4 className="font-bold text-amber-900">Cliente obrigatório</h4>
+                                    <p className="text-sm text-amber-700 mt-1">
+                                      O método "Acerto" requer um cliente cadastrado. Selecione um cliente registrado na aba Clientes antes de usar este método.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
 

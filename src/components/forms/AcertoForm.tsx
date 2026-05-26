@@ -6,16 +6,17 @@ import { CurrencyInput } from '../CurrencyInput';
 
 interface AcertoFormProps {
   acerto?: Acerto | null;
+  defaultType?: 'cliente' | 'empresa';
   onSubmit: (acerto: Omit<Acerto, 'id' | 'createdAt'>) => void;
   onCancel: () => void;
 }
 
-export function AcertoForm({ acerto, onSubmit, onCancel }: AcertoFormProps) {
+export function AcertoForm({ acerto, defaultType, onSubmit, onCancel }: AcertoFormProps) {
   const { sales, debts } = useAppContext();
   const [formData, setFormData] = useState({
     clientName: acerto?.clientName || '',
     companyName: acerto?.companyName || '',
-    type: acerto?.type || 'cliente' as const,
+    type: acerto?.type || defaultType || 'empresa' as const,
     totalAmount: acerto?.totalAmount || 0,
     paidAmount: acerto?.paidAmount || 0,
     pendingAmount: acerto?.pendingAmount || 0,

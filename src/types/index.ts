@@ -84,6 +84,7 @@ export interface Sale {
   date: string;
   deliveryDate?: string | null;
   client: string;
+  clienteId?: string | null; // FK to registered customer
   sellerId?: string | null;
   products: Product[] | null;
   saleItems?: SaleItem[];
@@ -200,6 +201,7 @@ export interface EmployeePayment {
   amount: number;
   paymentDate: string;
   isPaid: boolean;
+  paymentType?: 'salario' | 'adiantamento' | 'comissao' | 'bonus' | 'hora_extra' | 'outro';
   receipt?: string;
   observations?: string;
   createdAt?: string;
@@ -324,6 +326,7 @@ export interface AgendaEvent {
 export interface Acerto {
   id?: string;
   clientName: string;
+  clienteId?: string; // FK to registered customer in clientes table
   companyName?: string; // Para dívidas de empresas
   type: 'cliente' | 'empresa'; // Distinguir entre acertos de clientes e empresas
   totalAmount: number;
