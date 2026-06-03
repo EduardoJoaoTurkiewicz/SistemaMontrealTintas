@@ -25,6 +25,11 @@ export interface CashTransactionInput {
   description: string;
   category: string;
   relatedId?: string | null;
+  /** Links this cash entry to the exact installment that generated it.
+   *  When provided this is the PRIMARY idempotency key — a unique DB index on
+   *  cash_transactions(installment_id) prevents any double-insert at the
+   *  database level.  The related_id guard is kept as a secondary check. */
+  installmentId?: string | null;
   paymentMethod?: string | null;
 }
 
@@ -60,8 +65,34 @@ function normaliseName(name: string): string {
 export async function registerCashTransaction(input: CashTransactionInput): Promise<void> {
   const ctx = '[financialCoreService.registerCashTransaction]';
 
-  // Guard: idempotency check before INSERT
-  if (input.relatedId) {
+  // ── Primary guard: installment_id (most precise — one installment, one entry) ──
+  if (input.installmentId) {
+    try {
+      const { data: existing, error: checkError } = await supabase
+        .from('cash_transactions')
+        .select('id')
+        .eq('installment_id', input.installmentId)
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error(`${ctx} Error during installment_id idempotency check:`, checkError);
+        throw checkError;
+      }
+
+      if (existing) {
+        console.warn(`${ctx} Duplicate prevented — installment_id=${input.installmentId}`);
+        return;
+      }
+    } catch (err: any) {
+      if (err?.code !== 'PGRST116') {
+        console.error(`${ctx} installment_id check failed:`, err);
+        throw err;
+      }
+    }
+  }
+
+  // ── Secondary guard: (related_id, category, type) for non-installment events ──
+  if (!input.installmentId && input.relatedId) {
     try {
       const { data: existing, error: checkError } = await supabase
         .from('cash_transactions')
@@ -97,15 +128,16 @@ export async function registerCashTransaction(input: CashTransactionInput): Prom
     category: input.category,
     created_at: new Date().toISOString(),
   };
-  if (input.relatedId)     row.related_id     = input.relatedId;
-  if (input.paymentMethod) row.payment_method = input.paymentMethod;
+  if (input.relatedId)     row.related_id      = input.relatedId;
+  if (input.installmentId) row.installment_id  = input.installmentId;
+  if (input.paymentMethod) row.payment_method  = input.paymentMethod;
 
   const { error } = await supabase.from('cash_transactions').insert([row]);
 
   if (error) {
     // Unique constraint violation → already inserted by a concurrent call
     if (error.code === '23505') {
-      console.warn(`${ctx} Unique constraint prevented duplicate for related_id=${input.relatedId}`);
+      console.warn(`${ctx} Unique constraint prevented duplicate — installment_id=${input.installmentId} related_id=${input.relatedId}`);
       return;
     }
     console.error(`${ctx} INSERT failed:`, error);

@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import { supabaseServices } from './supabaseServices';
 import { safeNumber } from '../utils/numberUtils';
 import { registerCashTransaction } from '../services/financialCoreService';
+import { validateFinancialAmounts } from '../utils/financialValidation';
 
 export class CashBalanceService {
   // Update cash balance when a check is marked as paid
@@ -39,12 +40,21 @@ export class CashBalanceService {
   // Update cash balance when a boleto is marked as paid
   static async handleBoletoPayment(boleto: any, oldStatus: string, newStatus: string): Promise<void> {
     if (oldStatus !== 'compensado' && newStatus === 'compensado') {
-      const amount = safeNumber(boleto.value, 0);
-      const finalAmount = safeNumber(boleto.finalAmount, amount);
+      const principal  = safeNumber(boleto.value, 0);
       const notaryCosts = safeNumber(boleto.notaryCosts, 0);
-      
+      // finalAmount is the gross amount received/paid — principal plus any charges.
+      // If the record doesn't carry finalAmount explicitly we derive it.
+      const finalAmount = safeNumber(boleto.finalAmount, principal + notaryCosts);
+
+      // Warn when the stored three-field model is internally inconsistent.
+      if (!validateFinancialAmounts(principal, notaryCosts, finalAmount)) {
+        console.warn(
+          `⚠️ Boleto ${boleto.id}: principal(${principal}) + charges(${notaryCosts}) ≠ final(${finalAmount}). Using finalAmount as authoritative.`
+        );
+      }
+
       if (boleto.isCompanyPayable) {
-        // Company's boleto = cash outflow
+        // Company's boleto = cash outflow for the full settled amount
         await this.createCashTransaction({
           date: boleto.paymentDate || new Date().toISOString().split('T')[0],
           type: 'saida',
@@ -55,20 +65,19 @@ export class CashBalanceService {
           paymentMethod: 'boleto'
         });
       } else {
-        // Received boleto = cash inflow (minus notary costs)
-        const netAmount = finalAmount - notaryCosts;
-        
+        // Received boleto = cash inflow for the gross amount received.
+        // Notary/cartório costs are recorded as a SEPARATE outflow so they
+        // are never deducted twice from the principal.
         await this.createCashTransaction({
           date: boleto.paymentDate || new Date().toISOString().split('T')[0],
           type: 'entrada',
-          amount: netAmount,
+          amount: finalAmount,
           description: `Boleto recebido - ${boleto.client}`,
           category: 'boleto',
           relatedId: boleto.id,
           paymentMethod: 'boleto'
         });
-        
-        // Create separate transaction for notary costs if any
+
         if (notaryCosts > 0) {
           await this.createCashTransaction({
             date: boleto.paymentDate || new Date().toISOString().split('T')[0],
@@ -76,7 +85,7 @@ export class CashBalanceService {
             amount: notaryCosts,
             description: `Custos de cartório - ${boleto.client}`,
             category: 'outro',
-            relatedId: boleto.id,
+            relatedId: `${boleto.id}_cartorio`,
             paymentMethod: 'cartorio'
           });
         }

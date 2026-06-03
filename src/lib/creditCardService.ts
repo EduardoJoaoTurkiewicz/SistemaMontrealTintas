@@ -60,7 +60,84 @@ export interface CreditCardDebtInstallment {
   updated_at: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Item 4 fix: a sale/debt is completed only when the installments array is
+ * non-empty AND every entry has the expected paid status.
+ * An empty array NEVER triggers 'completed'.
+ */
+function isAllReceived(installments: any[] | null | undefined): boolean {
+  return (installments?.length ?? 0) > 0 && installments!.every(i => i.status === 'received');
+}
+
+function isAllPaid(installments: any[] | null | undefined): boolean {
+  return (installments?.length ?? 0) > 0 && installments!.every(i => i.status === 'paid');
+}
+
+/** Build the installments array for a credit_card_sale. */
+function buildSaleInstallments(
+  creditCardSaleId: string,
+  totalAmount: number,
+  count: number,
+  firstDueDate: string
+): Array<{
+  credit_card_sale_id: string;
+  installment_number: number;
+  amount: number;
+  due_date: string;
+  status: string;
+}> {
+  const installmentAmount = totalAmount / count;
+  return Array.from({ length: count }, (_, i) => {
+    const dueDate = fromISODateOnly(firstDueDate);
+    dueDate.setMonth(dueDate.getMonth() + i);
+    return {
+      credit_card_sale_id: creditCardSaleId,
+      installment_number: i + 1,
+      amount: installmentAmount,
+      due_date: toISODateOnly(dueDate),
+      status: 'pending',
+    };
+  });
+}
+
+/** Build the installments array for a credit_card_debt. */
+function buildDebtInstallments(
+  creditCardDebtId: string,
+  totalAmount: number,
+  count: number,
+  firstDueDate: string
+): Array<{
+  credit_card_debt_id: string;
+  installment_number: number;
+  amount: number;
+  due_date: string;
+  status: string;
+}> {
+  const installmentAmount = totalAmount / count;
+  return Array.from({ length: count }, (_, i) => {
+    const dueDate = fromISODateOnly(firstDueDate);
+    dueDate.setMonth(dueDate.getMonth() + i);
+    return {
+      credit_card_debt_id: creditCardDebtId,
+      installment_number: i + 1,
+      amount: installmentAmount,
+      due_date: toISODateOnly(dueDate),
+      status: 'pending',
+    };
+  });
+}
+
+// ─── Service ──────────────────────────────────────────────────────────────────
+
 export const CreditCardService = {
+
+  /**
+   * Item 5 — Atomic creation via RPC.
+   * Falls back to two-step insert with delete-on-failure rollback if the RPC
+   * is unavailable.
+   */
   async createFromSale(params: {
     saleId: string;
     clientName: string;
@@ -70,44 +147,62 @@ export const CreditCardService = {
     firstDueDate: string;
   }): Promise<string> {
     const { saleId, clientName, totalAmount, installments, saleDate, firstDueDate } = params;
-    const installmentAmount = totalAmount / installments;
+
+    // Attempt atomic RPC first (Item 5)
+    const saleData = {
+      sale_id:          saleId,
+      client_name:      clientName,
+      total_amount:     totalAmount,
+      remaining_amount: totalAmount,
+      installments,
+      sale_date:        saleDate,
+      first_due_date:   firstDueDate,
+      status:           'active',
+      anticipated:      false,
+    };
+
+    const installmentsForRpc = Array.from({ length: installments }, (_, i) => {
+      const dueDate = fromISODateOnly(firstDueDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      return {
+        installment_number: i + 1,
+        amount:             totalAmount / installments,
+        due_date:           toISODateOnly(dueDate),
+        status:             'pending',
+      };
+    });
+
+    const { data: rpcId, error: rpcError } = await supabase.rpc(
+      'create_credit_card_sale_atomic',
+      { p_sale_data: saleData, p_installments: installmentsForRpc }
+    );
+
+    if (!rpcError && rpcId) {
+      return rpcId as string;
+    }
+
+    // RPC unavailable — fall back to two-step with manual rollback
+    console.warn('[CreditCardService.createFromSale] RPC unavailable, using fallback:', rpcError?.message);
 
     const { data: sale, error: saleError } = await supabase
       .from('credit_card_sales')
-      .insert({
-        sale_id: saleId,
-        client_name: clientName,
-        total_amount: totalAmount,
-        remaining_amount: totalAmount,
-        installments: installments,
-        sale_date: saleDate,
-        first_due_date: firstDueDate,
-        status: 'active',
-        anticipated: false,
-      })
+      .insert(saleData)
       .select()
       .single();
 
     if (saleError) throw saleError;
 
-    const installmentsData = [];
-    for (let i = 0; i < installments; i++) {
-      const dueDate = fromISODateOnly(firstDueDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
-      installmentsData.push({
-        credit_card_sale_id: sale.id,
-        installment_number: i + 1,
-        amount: installmentAmount,
-        due_date: toISODateOnly(dueDate),
-        status: 'pending',
-      });
-    }
+    const installmentsData = buildSaleInstallments(sale.id, totalAmount, installments, firstDueDate);
 
     const { error: installmentsError } = await supabase
       .from('credit_card_sale_installments')
       .insert(installmentsData);
 
-    if (installmentsError) throw installmentsError;
+    if (installmentsError) {
+      // Rollback: remove the orphan sale (Item 5)
+      await supabase.from('credit_card_sales').delete().eq('id', sale.id);
+      throw installmentsError;
+    }
 
     return sale.id;
   },
@@ -121,43 +216,58 @@ export const CreditCardService = {
     firstDueDate: string;
   }): Promise<string> {
     const { debtId, supplierName, totalAmount, installments, purchaseDate, firstDueDate } = params;
-    const installmentAmount = totalAmount / installments;
+
+    const debtData = {
+      debt_id:          debtId,
+      supplier_name:    supplierName,
+      total_amount:     totalAmount,
+      remaining_amount: totalAmount,
+      installments,
+      purchase_date:    purchaseDate,
+      first_due_date:   firstDueDate,
+      status:           'active',
+    };
+
+    const installmentsForRpc = Array.from({ length: installments }, (_, i) => {
+      const dueDate = fromISODateOnly(firstDueDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      return {
+        installment_number: i + 1,
+        amount:             totalAmount / installments,
+        due_date:           toISODateOnly(dueDate),
+        status:             'pending',
+      };
+    });
+
+    const { data: rpcId, error: rpcError } = await supabase.rpc(
+      'create_credit_card_debt_atomic',
+      { p_debt_data: debtData, p_installments: installmentsForRpc }
+    );
+
+    if (!rpcError && rpcId) {
+      return rpcId as string;
+    }
+
+    console.warn('[CreditCardService.createFromDebt] RPC unavailable, using fallback:', rpcError?.message);
 
     const { data: debt, error: debtError } = await supabase
       .from('credit_card_debts')
-      .insert({
-        debt_id: debtId,
-        supplier_name: supplierName,
-        total_amount: totalAmount,
-        remaining_amount: totalAmount,
-        installments: installments,
-        purchase_date: purchaseDate,
-        first_due_date: firstDueDate,
-        status: 'active',
-      })
+      .insert(debtData)
       .select()
       .single();
 
     if (debtError) throw debtError;
 
-    const installmentsData = [];
-    for (let i = 0; i < installments; i++) {
-      const dueDate = fromISODateOnly(firstDueDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
-      installmentsData.push({
-        credit_card_debt_id: debt.id,
-        installment_number: i + 1,
-        amount: installmentAmount,
-        due_date: toISODateOnly(dueDate),
-        status: 'pending',
-      });
-    }
+    const installmentsData = buildDebtInstallments(debt.id, totalAmount, installments, firstDueDate);
 
     const { error: installmentsError } = await supabase
       .from('credit_card_debt_installments')
       .insert(installmentsData);
 
-    if (installmentsError) throw installmentsError;
+    if (installmentsError) {
+      await supabase.from('credit_card_debts').delete().eq('id', debt.id);
+      throw installmentsError;
+    }
 
     return debt.id;
   },
@@ -171,44 +281,59 @@ export const CreditCardService = {
     firstDueDate: string;
   }): Promise<string> {
     const { clientName, totalAmount, installments, paymentDate, firstDueDate } = params;
-    const installmentAmount = totalAmount / installments;
+
+    const saleData = {
+      sale_id:          null,
+      client_name:      clientName,
+      total_amount:     totalAmount,
+      remaining_amount: totalAmount,
+      installments,
+      sale_date:        paymentDate,
+      first_due_date:   firstDueDate,
+      status:           'active',
+      anticipated:      false,
+    };
+
+    const installmentsForRpc = Array.from({ length: installments }, (_, i) => {
+      const dueDate = fromISODateOnly(firstDueDate);
+      dueDate.setMonth(dueDate.getMonth() + i);
+      return {
+        installment_number: i + 1,
+        amount:             totalAmount / installments,
+        due_date:           toISODateOnly(dueDate),
+        status:             'pending',
+      };
+    });
+
+    const { data: rpcId, error: rpcError } = await supabase.rpc(
+      'create_credit_card_sale_atomic',
+      { p_sale_data: saleData, p_installments: installmentsForRpc }
+    );
+
+    if (!rpcError && rpcId) {
+      return rpcId as string;
+    }
+
+    console.warn('[CreditCardService.createFromAcerto] RPC unavailable, using fallback:', rpcError?.message);
 
     const { data: sale, error: saleError } = await supabase
       .from('credit_card_sales')
-      .insert({
-        sale_id: null,
-        client_name: clientName,
-        total_amount: totalAmount,
-        remaining_amount: totalAmount,
-        installments: installments,
-        sale_date: paymentDate,
-        first_due_date: firstDueDate,
-        status: 'active',
-        anticipated: false,
-      })
+      .insert(saleData)
       .select()
       .single();
 
     if (saleError) throw saleError;
 
-    const installmentsData = [];
-    for (let i = 0; i < installments; i++) {
-      const dueDate = fromISODateOnly(firstDueDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
-      installmentsData.push({
-        credit_card_sale_id: sale.id,
-        installment_number: i + 1,
-        amount: installmentAmount,
-        due_date: toISODateOnly(dueDate),
-        status: 'pending',
-      });
-    }
+    const installmentsData = buildSaleInstallments(sale.id, totalAmount, installments, firstDueDate);
 
     const { error: installmentsError } = await supabase
       .from('credit_card_sale_installments')
       .insert(installmentsData);
 
-    if (installmentsError) throw installmentsError;
+    if (installmentsError) {
+      await supabase.from('credit_card_sales').delete().eq('id', sale.id);
+      throw installmentsError;
+    }
 
     return sale.id;
   },
@@ -228,12 +353,12 @@ export const CreditCardService = {
     const { error: updateError } = await supabase
       .from('credit_card_sales')
       .update({
-        anticipated: true,
-        anticipated_date: getCurrentDateISO(),
-        anticipated_fee: anticipationFee,
+        anticipated:        true,
+        anticipated_date:   getCurrentDateISO(),
+        anticipated_fee:    anticipationFee,
         anticipated_amount: anticipatedAmount,
-        remaining_amount: 0,
-        status: 'completed'
+        remaining_amount:   0,
+        status:             'completed',
       })
       .eq('id', saleId);
 
@@ -241,33 +366,35 @@ export const CreditCardService = {
 
     const { error: installmentsError } = await supabase
       .from('credit_card_sale_installments')
-      .update({
-        status: 'received',
-        received_date: getCurrentDateISO()
-      })
+      .update({ status: 'received', received_date: getCurrentDateISO() })
       .eq('credit_card_sale_id', saleId)
       .eq('status', 'pending');
 
     if (installmentsError) throw installmentsError;
 
-    const { error: cashError } = await supabase
-      .from('cash_transactions')
-      .insert([{
-        date: getCurrentDateISO(),
-        type: 'entrada',
-        amount: anticipatedAmount,
-        description: `Antecipação de venda (Cartão de Crédito) - ${sale.client_name}`,
-        category: 'antecipacao_cartao',
-        related_id: saleId,
-        payment_method: 'cartao_credito'
-      }]);
-
-    if (cashError) throw cashError;
+    // Anticipation cash entry — use related_id as idempotency key (no installment_id)
+    await registerCashTransaction({
+      date:          getCurrentDateISO(),
+      type:          'entrada',
+      amount:        anticipatedAmount,
+      description:   `Antecipação de venda (Cartão de Crédito) - ${sale.client_name}`,
+      category:      'antecipacao_cartao',
+      relatedId:     saleId,
+      paymentMethod: 'cartao_credito',
+    });
 
     const { AgendaAutoService } = await import('./agendaAutoService');
     await AgendaAutoService.removeSaleInstallmentsFromAgenda(saleId);
   },
 
+  /**
+   * Items 2 & 3 & 4 — register a single credit-card sale installment as received.
+   *
+   * - Idempotency: installment_id is the primary guard (unique DB index).
+   * - Status update: installment → 'received'.
+   * - Cash entry: via registerCashTransaction (never duplicated).
+   * - Parent status: recalculated only when array is non-empty (Item 4).
+   */
   async registerSaleInstallmentPayment(
     installmentId: string,
     receivedDate: string,
@@ -284,16 +411,16 @@ export const CreditCardService = {
 
     const sale = (installment as any).credit_card_sales;
 
-    await supabase
+    const { error: updateError } = await supabase
       .from('credit_card_sale_installments')
-      .update({
-        status: 'received',
-        received_date: receivedDate
-      })
+      .update({ status: 'received', received_date: receivedDate })
       .eq('id', installmentId);
+
+    if (updateError) throw updateError;
 
     const description = `Recebimento parcela ${installment.installment_number}/${sale.installments} - ${sale.client_name} (Cartão de Crédito)${observations ? ` - ${observations}` : ''}`;
 
+    // Item 3: installment_id is the primary idempotency key
     await registerCashTransaction({
       date:          receivedDate,
       type:          'entrada',
@@ -301,29 +428,24 @@ export const CreditCardService = {
       description,
       category:      'recebimento_cartao',
       relatedId:     sale.id,
+      installmentId: installmentId,
       paymentMethod: 'cartao_credito',
     });
 
     const { data: allInstallments } = await supabase
       .from('credit_card_sale_installments')
-      .select('*')
+      .select('status')
       .eq('credit_card_sale_id', sale.id);
 
-    const allReceived = allInstallments?.every(i => i.status === 'received');
-
-    if (allReceived) {
+    // Item 4: non-empty check
+    if (isAllReceived(allInstallments)) {
       await supabase
         .from('credit_card_sales')
-        .update({
-          remaining_amount: 0,
-          status: 'completed'
-        })
+        .update({ remaining_amount: 0, status: 'completed' })
         .eq('id', sale.id);
     } else {
-      const remainingAmount = allInstallments
-        ?.filter(i => i.status === 'pending')
-        .reduce((sum, i) => sum + i.amount, 0) || 0;
-
+      const remainingAmount =
+        (allInstallments ?? []).filter(i => i.status === 'pending').reduce((sum, i: any) => sum + i.amount, 0);
       await supabase
         .from('credit_card_sales')
         .update({ remaining_amount: remainingAmount })
@@ -331,6 +453,9 @@ export const CreditCardService = {
     }
   },
 
+  /**
+   * Items 2 & 3 & 4 — register a single credit-card debt installment as paid.
+   */
   async registerDebtInstallmentPayment(
     installmentId: string,
     paidDate: string,
@@ -347,14 +472,14 @@ export const CreditCardService = {
 
     const debt = (installment as any).credit_card_debts;
 
-    await supabase
+    const { error: updateError } = await supabase
       .from('credit_card_debt_installments')
-      .update({
-        status: 'paid',
-        paid_date: paidDate
-      })
+      .update({ status: 'paid', paid_date: paidDate })
       .eq('id', installmentId);
 
+    if (updateError) throw updateError;
+
+    // Item 3: installment_id is the primary idempotency key
     await registerCashTransaction({
       date:          paidDate,
       type:          'saida',
@@ -362,29 +487,24 @@ export const CreditCardService = {
       description:   `Pagamento parcela ${installment.installment_number}/${debt.installments} - ${debt.supplier_name} (Cartão de Crédito)${observations ? ` - ${observations}` : ''}`,
       category:      'pagamento_cartao',
       relatedId:     debt.id,
+      installmentId: installmentId,
       paymentMethod: 'cartao_credito',
     });
 
     const { data: allDebtInstallments } = await supabase
       .from('credit_card_debt_installments')
-      .select('*')
+      .select('status')
       .eq('credit_card_debt_id', debt.id);
 
-    const allPaid = allDebtInstallments?.every(i => i.status === 'paid');
-
-    if (allPaid) {
+    // Item 4: non-empty check
+    if (isAllPaid(allDebtInstallments)) {
       await supabase
         .from('credit_card_debts')
-        .update({
-          remaining_amount: 0,
-          status: 'completed'
-        })
+        .update({ remaining_amount: 0, status: 'completed' })
         .eq('id', debt.id);
     } else {
-      const remainingAmount = allDebtInstallments
-        ?.filter(i => i.status === 'pending')
-        .reduce((sum, i) => sum + i.amount, 0) || 0;
-
+      const remainingAmount =
+        (allDebtInstallments ?? []).filter(i => i.status === 'pending').reduce((sum, i: any) => sum + i.amount, 0);
       await supabase
         .from('credit_card_debts')
         .update({ remaining_amount: remainingAmount })
@@ -392,6 +512,9 @@ export const CreditCardService = {
     }
   },
 
+  /**
+   * Items 2, 3, 4 — batch-process all installments whose due_date has passed.
+   */
   async checkAndProcessDueInstallments(): Promise<void> {
     const today = getCurrentDateISO();
 
@@ -403,19 +526,24 @@ export const CreditCardService = {
       .lte('due_date', today);
 
     if (queryError) {
-      console.error('Erro ao buscar parcelas vencidas:', queryError);
+      console.error('[CreditCardService] Erro ao buscar parcelas vencidas:', queryError);
       return;
     }
 
-    for (const installment of dueInstallments || []) {
+    for (const installment of dueInstallments ?? []) {
       const sale = (installment as any).credit_card_sales;
 
-      await supabase
+      const { error: updateError } = await supabase
         .from('credit_card_sale_installments')
         .update({ status: 'received', received_date: today })
         .eq('id', installment.id);
 
-      // Idempotent via registerCashTransaction
+      if (updateError) {
+        console.error(`[CreditCardService] Error updating installment ${installment.id}:`, updateError);
+        continue;
+      }
+
+      // Item 3: installment_id primary guard
       await registerCashTransaction({
         date:          today,
         type:          'entrada',
@@ -423,24 +551,24 @@ export const CreditCardService = {
         description:   `Recebimento parcela ${installment.installment_number} - ${sale.client_name} (Cartão de Crédito)`,
         category:      'recebimento_cartao',
         relatedId:     sale.id,
+        installmentId: installment.id,
         paymentMethod: 'cartao_credito',
       });
 
       const { data: allInstallments } = await supabase
         .from('credit_card_sale_installments')
-        .select('*')
+        .select('status, amount')
         .eq('credit_card_sale_id', sale.id);
 
-      const allReceived = allInstallments?.every(i => i.status === 'received');
-
-      if (allReceived) {
+      // Item 4: non-empty check
+      if (isAllReceived(allInstallments)) {
         await supabase
           .from('credit_card_sales')
           .update({ remaining_amount: 0, status: 'completed' })
           .eq('id', sale.id);
       } else {
         const remainingAmount =
-          allInstallments?.filter(i => i.status === 'pending').reduce((sum, i) => sum + i.amount, 0) || 0;
+          (allInstallments ?? []).filter(i => i.status === 'pending').reduce((sum, i: any) => sum + i.amount, 0);
         await supabase
           .from('credit_card_sales')
           .update({ remaining_amount: remainingAmount })
@@ -456,19 +584,24 @@ export const CreditCardService = {
       .lte('due_date', today);
 
     if (debtQueryError) {
-      console.error('Erro ao buscar parcelas de dívida vencidas:', debtQueryError);
+      console.error('[CreditCardService] Erro ao buscar parcelas de dívida vencidas:', debtQueryError);
       return;
     }
 
-    for (const installment of dueDebtInstallments || []) {
+    for (const installment of dueDebtInstallments ?? []) {
       const debt = (installment as any).credit_card_debts;
 
-      await supabase
+      const { error: updateError } = await supabase
         .from('credit_card_debt_installments')
         .update({ status: 'paid', paid_date: today })
         .eq('id', installment.id);
 
-      // Idempotent via registerCashTransaction
+      if (updateError) {
+        console.error(`[CreditCardService] Error updating debt installment ${installment.id}:`, updateError);
+        continue;
+      }
+
+      // Item 3: installment_id primary guard
       await registerCashTransaction({
         date:          today,
         type:          'saida',
@@ -476,29 +609,29 @@ export const CreditCardService = {
         description:   `Pagamento parcela ${installment.installment_number} - ${debt.supplier_name} (Cartão de Crédito)`,
         category:      'pagamento_cartao',
         relatedId:     debt.id,
+        installmentId: installment.id,
         paymentMethod: 'cartao_credito',
       });
 
       const { data: allDebtInstallments } = await supabase
         .from('credit_card_debt_installments')
-        .select('*')
+        .select('status, amount')
         .eq('credit_card_debt_id', debt.id);
 
-      const allPaid = allDebtInstallments?.every(i => i.status === 'paid');
-
-      if (allPaid) {
+      // Item 4: non-empty check
+      if (isAllPaid(allDebtInstallments)) {
         await supabase
           .from('credit_card_debts')
           .update({ remaining_amount: 0, status: 'completed' })
           .eq('id', debt.id);
       } else {
         const remainingAmount =
-          allDebtInstallments?.filter(i => i.status === 'pending').reduce((sum, i) => sum + i.amount, 0) || 0;
+          (allDebtInstallments ?? []).filter(i => i.status === 'pending').reduce((sum, i: any) => sum + i.amount, 0);
         await supabase
           .from('credit_card_debts')
           .update({ remaining_amount: remainingAmount })
           .eq('id', debt.id);
       }
     }
-  }
+  },
 };
