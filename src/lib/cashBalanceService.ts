@@ -2,6 +2,7 @@
 import { supabase } from './supabase';
 import { supabaseServices } from './supabaseServices';
 import { safeNumber } from '../utils/numberUtils';
+import { registerCashTransaction } from '../services/financialCoreService';
 
 export class CashBalanceService {
   // Update cash balance when a check is marked as paid
@@ -83,36 +84,17 @@ export class CashBalanceService {
     }
   }
 
-  // Create cash transaction with idempotency guard (Layer 2)
+  // Delegate to financialCoreService.registerCashTransaction (idempotent, never silent).
   private static async createCashTransaction(transactionData: any): Promise<void> {
-    try {
-      // Layer 2: check for an existing transaction with the same related_id + category
-      // to prevent duplicate entries (e.g. from double-clicks or retries).
-      if (transactionData.relatedId) {
-        const { data: existing } = await supabase
-          .from('cash_transactions')
-          .select('id')
-          .eq('related_id', transactionData.relatedId)
-          .eq('category', transactionData.category)
-          .maybeSingle();
-
-        if (existing) {
-          console.warn('⚠️ Cash transaction already exists for related_id:', transactionData.relatedId, '— skipping duplicate.');
-          return;
-        }
-      }
-
-      await supabaseServices.cashTransactions.create(transactionData);
-      console.log('✅ Cash transaction created:', transactionData.description);
-    } catch (error: any) {
-      // Layer 3: unique constraint violation (23505) means the DB already has this row
-      if (error?.code === '23505') {
-        console.warn('⚠️ Unique constraint prevented duplicate cash transaction for related_id:', transactionData.relatedId);
-        return;
-      }
-      console.error('❌ Error creating cash transaction:', error);
-      throw error;
-    }
+    await registerCashTransaction({
+      date:          transactionData.date,
+      type:          transactionData.type,
+      amount:        transactionData.amount,
+      description:   transactionData.description,
+      category:      transactionData.category,
+      relatedId:     transactionData.relatedId ?? null,
+      paymentMethod: transactionData.paymentMethod ?? null,
+    });
   }
 
   // Handle acerto payment processing

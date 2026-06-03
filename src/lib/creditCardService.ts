@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { safeNumber } from '../utils/numberUtils';
 import { getCurrentDateISO, toISODateOnly, fromISODateOnly } from './dateOnly';
 import toast from 'react-hot-toast';
+import { registerCashTransaction } from '../services/financialCoreService';
 
 export interface CreditCardSale {
   id: string;
@@ -293,27 +294,15 @@ export const CreditCardService = {
 
     const description = `Recebimento parcela ${installment.installment_number}/${sale.installments} - ${sale.client_name} (Cartão de Crédito)${observations ? ` - ${observations}` : ''}`;
 
-    const { data: existing } = await supabase
-      .from('cash_transactions')
-      .select('id')
-      .eq('related_id', sale.id)
-      .eq('category', 'recebimento_cartao')
-      .ilike('description', `%parcela ${installment.installment_number}/%`)
-      .maybeSingle();
-
-    if (!existing) {
-      await supabase
-        .from('cash_transactions')
-        .insert([{
-          date: receivedDate,
-          type: 'entrada',
-          amount: installment.amount,
-          description,
-          category: 'recebimento_cartao',
-          related_id: sale.id,
-          payment_method: 'cartao_credito'
-        }]);
-    }
+    await registerCashTransaction({
+      date:          receivedDate,
+      type:          'entrada',
+      amount:        installment.amount,
+      description,
+      category:      'recebimento_cartao',
+      relatedId:     sale.id,
+      paymentMethod: 'cartao_credito',
+    });
 
     const { data: allInstallments } = await supabase
       .from('credit_card_sale_installments')
@@ -366,17 +355,15 @@ export const CreditCardService = {
       })
       .eq('id', installmentId);
 
-    await supabase
-      .from('cash_transactions')
-      .insert([{
-        date: paidDate,
-        type: 'saida',
-        amount: installment.amount,
-        description: `Pagamento parcela ${installment.installment_number}/${debt.installments} - ${debt.supplier_name} (Cartão de Crédito)${observations ? ` - ${observations}` : ''}`,
-        category: 'pagamento_cartao',
-        related_id: debt.id,
-        payment_method: 'cartao_credito'
-      }]);
+    await registerCashTransaction({
+      date:          paidDate,
+      type:          'saida',
+      amount:        installment.amount,
+      description:   `Pagamento parcela ${installment.installment_number}/${debt.installments} - ${debt.supplier_name} (Cartão de Crédito)${observations ? ` - ${observations}` : ''}`,
+      category:      'pagamento_cartao',
+      relatedId:     debt.id,
+      paymentMethod: 'cartao_credito',
+    });
 
     const { data: allDebtInstallments } = await supabase
       .from('credit_card_debt_installments')
@@ -408,6 +395,7 @@ export const CreditCardService = {
   async checkAndProcessDueInstallments(): Promise<void> {
     const today = getCurrentDateISO();
 
+    // ── Sale installments ──────────────────────────────────────────────────────
     const { data: dueInstallments, error: queryError } = await supabase
       .from('credit_card_sale_installments')
       .select('*, credit_card_sales!inner(*)')
@@ -424,33 +412,19 @@ export const CreditCardService = {
 
       await supabase
         .from('credit_card_sale_installments')
-        .update({
-          status: 'received',
-          received_date: today
-        })
+        .update({ status: 'received', received_date: today })
         .eq('id', installment.id);
 
-      const { data: existingTx } = await supabase
-        .from('cash_transactions')
-        .select('id')
-        .eq('related_id', sale.id)
-        .eq('category', 'recebimento_cartao')
-        .ilike('description', `%parcela ${installment.installment_number} %`)
-        .maybeSingle();
-
-      if (!existingTx) {
-        await supabase
-          .from('cash_transactions')
-          .insert([{
-            date: today,
-            type: 'entrada',
-            amount: installment.amount,
-            description: `Recebimento parcela ${installment.installment_number} - ${sale.client_name} (Cartão de Crédito)`,
-            category: 'recebimento_cartao',
-            related_id: sale.id,
-            payment_method: 'cartao_credito'
-          }]);
-      }
+      // Idempotent via registerCashTransaction
+      await registerCashTransaction({
+        date:          today,
+        type:          'entrada',
+        amount:        installment.amount,
+        description:   `Recebimento parcela ${installment.installment_number} - ${sale.client_name} (Cartão de Crédito)`,
+        category:      'recebimento_cartao',
+        relatedId:     sale.id,
+        paymentMethod: 'cartao_credito',
+      });
 
       const { data: allInstallments } = await supabase
         .from('credit_card_sale_installments')
@@ -462,16 +436,11 @@ export const CreditCardService = {
       if (allReceived) {
         await supabase
           .from('credit_card_sales')
-          .update({
-            remaining_amount: 0,
-            status: 'completed'
-          })
+          .update({ remaining_amount: 0, status: 'completed' })
           .eq('id', sale.id);
       } else {
-        const remainingAmount = allInstallments
-          ?.filter(i => i.status === 'pending')
-          .reduce((sum, i) => sum + i.amount, 0) || 0;
-
+        const remainingAmount =
+          allInstallments?.filter(i => i.status === 'pending').reduce((sum, i) => sum + i.amount, 0) || 0;
         await supabase
           .from('credit_card_sales')
           .update({ remaining_amount: remainingAmount })
@@ -479,6 +448,7 @@ export const CreditCardService = {
       }
     }
 
+    // ── Debt installments ──────────────────────────────────────────────────────
     const { data: dueDebtInstallments, error: debtQueryError } = await supabase
       .from('credit_card_debt_installments')
       .select('*, credit_card_debts!inner(*)')
@@ -495,23 +465,19 @@ export const CreditCardService = {
 
       await supabase
         .from('credit_card_debt_installments')
-        .update({
-          status: 'paid',
-          paid_date: today
-        })
+        .update({ status: 'paid', paid_date: today })
         .eq('id', installment.id);
 
-      await supabase
-        .from('cash_transactions')
-        .insert([{
-          date: today,
-          type: 'saida',
-          amount: installment.amount,
-          description: `Pagamento parcela ${installment.installment_number} - ${debt.supplier_name} (Cartão de Crédito)`,
-          category: 'pagamento_cartao',
-          related_id: debt.id,
-          payment_method: 'cartao_credito'
-        }]);
+      // Idempotent via registerCashTransaction
+      await registerCashTransaction({
+        date:          today,
+        type:          'saida',
+        amount:        installment.amount,
+        description:   `Pagamento parcela ${installment.installment_number} - ${debt.supplier_name} (Cartão de Crédito)`,
+        category:      'pagamento_cartao',
+        relatedId:     debt.id,
+        paymentMethod: 'cartao_credito',
+      });
 
       const { data: allDebtInstallments } = await supabase
         .from('credit_card_debt_installments')
@@ -523,16 +489,11 @@ export const CreditCardService = {
       if (allPaid) {
         await supabase
           .from('credit_card_debts')
-          .update({
-            remaining_amount: 0,
-            status: 'completed'
-          })
+          .update({ remaining_amount: 0, status: 'completed' })
           .eq('id', debt.id);
       } else {
-        const remainingAmount = allDebtInstallments
-          ?.filter(i => i.status === 'pending')
-          .reduce((sum, i) => sum + i.amount, 0) || 0;
-
+        const remainingAmount =
+          allDebtInstallments?.filter(i => i.status === 'pending').reduce((sum, i) => sum + i.amount, 0) || 0;
         await supabase
           .from('credit_card_debts')
           .update({ remaining_amount: remainingAmount })

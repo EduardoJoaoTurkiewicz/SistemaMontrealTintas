@@ -3,6 +3,7 @@ import { supabaseServices } from './supabaseServices';
 import { formatDateForInput, addDays, getCurrentDateString } from '../utils/dateUtils';
 import { safeNumber } from '../utils/numberUtils';
 import { UUIDManager } from './uuidManager';
+import { upsertAcerto } from '../services/financialCoreService';
 
 export class InstallmentService {
   // Create checks for sale payment method
@@ -99,7 +100,7 @@ export class InstallmentService {
     console.log(`✅ All ${installments} boletos created for sale ${saleId}`);
   }
 
-  // Create acerto for sale payment method.
+  // Create acerto for sale payment method — delegates to financialCoreService (single authority).
   // clienteId: the registered customer's UUID (required for acerto payment).
   // client: the customer's display name.
   static async createAcertoForSale(client: string, paymentMethod: any, clienteId?: string | null): Promise<void> {
@@ -108,50 +109,8 @@ export class InstallmentService {
     const amount = safeNumber(paymentMethod.amount, 0);
     if (amount <= 0) return;
 
-    const normalizedClient = client.trim().toLowerCase();
-    console.log(`🔄 Processing acerto for client: "${client}" (id: ${clienteId ?? 'none'}), amount: ${amount}`);
-
-    try {
-      const existingAcertos = await supabaseServices.acertos.getAcertos();
-
-      // Match by clienteId first (most reliable), fall back to name comparison
-      const existingAcerto = existingAcertos.find(a => {
-        if (a.type !== 'cliente') return false;
-        if (clienteId && a.clienteId) return a.clienteId === clienteId;
-        return a.clientName.trim().toLowerCase() === normalizedClient;
-      });
-
-      if (existingAcerto) {
-        const updatedAcerto = {
-          ...existingAcerto,
-          totalAmount: existingAcerto.totalAmount + amount,
-          pendingAmount: existingAcerto.pendingAmount + amount,
-          status: 'pendente' as const,
-          updatedAt: new Date().toISOString()
-        };
-
-        await supabaseServices.acertos.update(existingAcerto.id!, updatedAcerto);
-        console.log(`✅ Acerto UPDATED for client "${existingAcerto.clientName}" - New total: R$ ${updatedAcerto.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-      } else {
-        const acertoData = {
-          id: UUIDManager.generateUUID(),
-          clientName: client,
-          clienteId: clienteId ?? undefined,
-          type: 'cliente' as const,
-          totalAmount: amount,
-          paidAmount: 0,
-          pendingAmount: amount,
-          status: 'pendente' as const,
-          observations: `Acerto criado automaticamente para vendas de ${client}`
-        };
-
-        await supabaseServices.acertos.create(acertoData);
-        console.log(`✅ NEW acerto CREATED for client "${client}" - Total: R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-      }
-    } catch (error) {
-      console.error(`❌ Error creating/updating acerto for client ${client}:`, error);
-      throw error;
-    }
+    console.log(`[InstallmentService] Delegating acerto upsert for client "${client}" to financialCoreService`);
+    await upsertAcerto({ clientName: client, clienteId, amount, type: 'cliente' });
   }
 
   // Create checks for debt payment method
@@ -250,55 +209,15 @@ export class InstallmentService {
     console.log(`✅ All ${installments} boletos created for debt ${debtId}`);
   }
 
-  // Create acerto for debt payment method
+  // Create acerto for debt payment method — delegates to financialCoreService (single authority).
   static async createAcertoForDebt(company: string, paymentMethod: any): Promise<void> {
     if (paymentMethod.type !== 'acerto') return;
-    
+
     const amount = safeNumber(paymentMethod.amount, 0);
     if (amount <= 0) return;
-    
-    console.log(`🔄 Creating/updating acerto for company ${company}, amount: ${amount}`);
-    
-    // Check if acerto already exists for this company
-    try {
-      const existingAcertos = await supabaseServices.acertos.getAcertos();
-      const existingAcerto = existingAcertos.find(a => 
-        (a.companyName === company || a.clientName === company) && a.type === 'empresa'
-      );
-    
-      if (existingAcerto) {
-        // Update existing acerto
-        const updatedAcerto = {
-          ...existingAcerto,
-          totalAmount: existingAcerto.totalAmount + amount,
-          pendingAmount: existingAcerto.pendingAmount + amount,
-          status: 'pendente' as const,
-          updatedAt: new Date().toISOString()
-        };
-      
-        await supabaseServices.acertos.update(existingAcerto.id!, updatedAcerto);
-        console.log(`✅ Acerto updated for company ${company}`);
-      } else {
-        // Create new acerto
-        const acertoData = {
-          id: UUIDManager.generateUUID(),
-          clientName: company,
-          companyName: company,
-          type: 'empresa' as const,
-          totalAmount: amount,
-          paidAmount: 0,
-          pendingAmount: amount,
-          status: 'pendente' as const,
-          observations: `Acerto criado automaticamente para dívidas de ${company}`
-        };
-      
-        await supabaseServices.acertos.create(acertoData);
-        console.log(`✅ New acerto created for company ${company}`);
-      }
-    } catch (error) {
-      console.error(`❌ Error creating/updating acerto for company ${company}:`, error);
-      throw error;
-    }
+
+    console.log(`[InstallmentService] Delegating acerto upsert for company "${company}" to financialCoreService`);
+    await upsertAcerto({ clientName: company, amount, type: 'empresa' });
   }
 
   // Update permuta consumed value for sale payment method

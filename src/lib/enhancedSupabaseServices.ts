@@ -466,51 +466,6 @@ export const enhancedDebtsService = {
         console.error('❌ Error creating credit card debt:', creditCardError);
       }
 
-      // Process acertos for debts
-      try {
-        for (const method of sanitizedDebt.paymentMethods || []) {
-          if (method.type === 'acerto') {
-            const companyName = sanitizedDebt.company;
-
-            const { data: existingAcerto, error: acertosError } = await supabase
-              .from('acertos')
-              .select('*')
-              .eq('client_name', companyName)
-              .eq('type', 'empresa')
-              .maybeSingle();
-
-            if (acertosError && acertosError.code !== 'PGRST116') {
-              console.error('❌ Error finding existing acerto for debt:', acertosError);
-            }
-
-            if (existingAcerto) {
-              const newTotal = safeNumber(existingAcerto.total_amount, 0) + safeNumber(method.amount, 0);
-              const newPending = safeNumber(existingAcerto.pending_amount, 0) + safeNumber(method.amount, 0);
-              await supabase
-                .from('acertos')
-                .update({ total_amount: newTotal, pending_amount: newPending, updated_at: new Date().toISOString() })
-                .eq('id', existingAcerto.id);
-            } else {
-              await supabase
-                .from('acertos')
-                .insert({
-                  client_name: companyName,
-                  type: 'empresa',
-                  total_amount: safeNumber(method.amount, 0),
-                  paid_amount: 0,
-                  pending_amount: safeNumber(method.amount, 0),
-                  payment_installments: 1,
-                  payment_installment_value: safeNumber(method.amount, 0),
-                  payment_interval: 30,
-                  status: 'pendente'
-                });
-            }
-          }
-        }
-      } catch (acertoError) {
-        console.error('❌ Error processing acerto for debt:', acertoError);
-      }
-
       return data.id;
     } catch (error) {
       console.error('❌ Error creating debt:', error);
