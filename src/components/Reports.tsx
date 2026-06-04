@@ -1,669 +1,778 @@
-import React, { useState, useMemo } from 'react';
-import { 
-  FileText, 
-  Download, 
-  Calendar, 
-  DollarSign, 
-  TrendingUp, 
-  TrendingDown,
-  Filter,
-  BarChart3,
-  PieChart,
-  Activity,
-  Receipt,
-  CreditCard
+import React, { useState, useMemo, useRef } from 'react';
+import {
+  FileText, Download, Calendar, DollarSign, TrendingUp, TrendingDown,
+  BarChart3, Activity, Receipt, CreditCard, CheckCircle, AlertCircle,
+  ArrowUpCircle, ArrowDownCircle, Clock, Users, ChevronDown, Filter
 } from 'lucide-react';
-import { useAppContext } from '../context/AppContext';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  PieChart as RechartsPieChart,
-  Pie,
-  Cell
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LineChart, Line, PieChart as RechartsPieChart,
+  Pie, Cell, AreaChart, Area, ComposedChart
 } from 'recharts';
-import { ExportButtons } from './reports/ExportButtons';
-import { EnhancedReceivablesReport } from './reports/EnhancedReceivablesReport';
-import { PayablesReport } from './reports/PayablesReport';
-import { ComprehensiveReport } from './reports/ComprehensiveReport';
+import { useAppContext } from '../context/AppContext';
+import { formatDateBR, getCurrentDateISO } from '../lib/dateOnly';
+import { safeNumber } from '../utils/numberUtils';
 
-const COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4'];
+const CHART_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6'];
+
+const PM_LABELS: Record<string, string> = {
+  dinheiro: 'Dinheiro', pix: 'PIX', cartao_credito: 'Crédito',
+  cartao_debito: 'Débito', cheque: 'Cheque', boleto: 'Boleto',
+  transferencia: 'Transf.', acerto: 'Acerto', permuta: 'Permuta',
+};
+
+function fmtBRL(v: number) {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function getMonthStart(): string {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+const SECTIONS = [
+  { id: 'summary',      label: 'Resumo',       icon: DollarSign },
+  { id: 'cashflow',     label: 'Fluxo de Caixa', icon: Activity },
+  { id: 'sales',        label: 'Vendas',        icon: TrendingUp },
+  { id: 'receivables',  label: 'A Receber',     icon: ArrowUpCircle },
+  { id: 'payables',     label: 'A Pagar',       icon: ArrowDownCircle },
+  { id: 'creditcard',   label: 'Cartão',        icon: CreditCard },
+  { id: 'comparisons',  label: 'Comparativos',  icon: BarChart3 },
+  { id: 'checks',       label: 'Cheques',       icon: FileText },
+];
 
 export default function Reports() {
-  const { 
-    sales, 
-    debts, 
-    checks, 
-    boletos, 
-    employees, 
-    employeePayments,
-    pixFees,
-    cashBalance,
-    loading 
+  const {
+    sales, debts, checks, boletos, cashTransactions, acertos,
+    employees, employeePayments, pixFees, isLoading
   } = useAppContext();
 
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  const [activeSection, setActiveSection] = useState('summary');
   const [filters, setFilters] = useState({
-    startDate: (() => {
-      const today = new Date();
-      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      const year = firstDay.getFullYear();
-      const month = String(firstDay.getMonth() + 1).padStart(2, '0');
-      const day = String(firstDay.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    })(),
-    endDate: (() => {
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const day = String(today.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    })(),
-    categories: [] as string[],
-    methods: [] as string[],
-    status: 'all',
-    reportType: 'comprehensive' as 'summary' | 'comprehensive'
+    startDate: getMonthStart(),
+    endDate: getCurrentDateISO(),
   });
 
-  // Dados para gráfico de métodos de pagamento
-  const paymentMethodsData = useMemo(() => {
-    const methods: Record<string, number> = {};
-    
-    sales.forEach(sale => {
-      (sale.paymentMethods || []).forEach(method => {
-        const methodName = method.type.replace('_', ' ').toUpperCase();
-        if (!methods[methodName]) {
-          methods[methodName] = 0;
-        }
-        methods[methodName] += method.amount;
-      });
+  // ── helpers ──────────────────────────────────────────────────────────────
+
+  const inRange = (dateStr: string) =>
+    dateStr >= filters.startDate && dateStr <= filters.endDate;
+
+  // ── period data ──────────────────────────────────────────────────────────
+
+  const periodSales  = useMemo(() => sales.filter(s => inRange(s.date)), [sales, filters]);
+  const periodDebts  = useMemo(() => debts.filter(d => inRange(d.date)), [debts, filters]);
+  const periodTxIn   = useMemo(() => cashTransactions.filter(t => inRange(t.date) && t.type === 'entrada'), [cashTransactions, filters]);
+  const periodTxOut  = useMemo(() => cashTransactions.filter(t => inRange(t.date) && t.type === 'saida'), [cashTransactions, filters]);
+
+  // ── SECTION 1: Financial Summary ─────────────────────────────────────────
+
+  const summary = useMemo(() => {
+    const revenue  = periodTxIn.reduce((s, t) => s + safeNumber(t.amount, 0), 0);
+    const expenses = periodTxOut.reduce((s, t) => s + safeNumber(t.amount, 0), 0);
+    const salesTotal = periodSales.reduce((s, sale) => s + safeNumber(sale.totalValue, 0), 0);
+    const debtsTotal = periodDebts.reduce((s, d) => s + safeNumber(d.totalValue, 0), 0);
+    const pendingReceivables = sales.reduce((s, sale) => s + safeNumber(sale.pendingAmount, 0), 0);
+    const pendingPayables    = debts.filter(d => !d.isPaid).reduce((s, d) => s + safeNumber(d.pendingAmount, 0), 0);
+    const pendingChecks      = checks.filter(c => !c.isOwnCheck && c.status === 'pendente' && !c.usedInDebt).reduce((s, c) => s + c.value, 0);
+    const pendingBoletos     = boletos.filter(b => !b.isCompanyPayable && b.status === 'pendente').reduce((s, b) => s + b.value, 0);
+    return { revenue, expenses, net: revenue - expenses, salesTotal, debtsTotal, pendingReceivables, pendingPayables, pendingChecks, pendingBoletos };
+  }, [periodTxIn, periodTxOut, periodSales, periodDebts, sales, debts, checks, boletos]);
+
+  // ── SECTION 2: Cash Flow ─────────────────────────────────────────────────
+
+  const cashFlowData = useMemo(() => {
+    const map = new Map<string, { date: string; entrada: number; saida: number }>();
+    cashTransactions.filter(t => inRange(t.date)).forEach(t => {
+      if (!map.has(t.date)) map.set(t.date, { date: t.date, entrada: 0, saida: 0 });
+      const row = map.get(t.date)!;
+      if (t.type === 'entrada') row.entrada += safeNumber(t.amount, 0);
+      else row.saida += safeNumber(t.amount, 0);
     });
-    
-    return Object.entries(methods).map(([name, value]) => ({
-      name,
-      value,
-      percentage: Object.values(methods).reduce((a, b) => a + b, 0) > 0 
-        ? ((value / Object.values(methods).reduce((a, b) => a + b, 0)) * 100).toFixed(1)
-        : '0'
-    })).filter(item => item.value > 0);
-  }, [sales]);
+    return [...map.values()]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(r => ({ ...r, label: formatDateBR(r.date), saldo: r.entrada - r.saida }));
+  }, [cashTransactions, filters]);
 
-  // Calculate report data based on filters
-  const reportData = useMemo(() => {
-    // Filter sales by period
-    const periodSales = sales.filter(sale => 
-      sale.date >= filters.startDate && sale.date <= filters.endDate
-    );
+  // ── SECTION 3: Sales Analysis ─────────────────────────────────────────────
 
-    // Calculate received values
-    const receivedValues = [];
-    
-    // Sales with instant payment
+  const salesByMethod = useMemo(() => {
+    const map: Record<string, number> = {};
     periodSales.forEach(sale => {
-      if (!sale.paymentMethods || !Array.isArray(sale.paymentMethods)) {
-        return; // Skip sales without valid payment methods
-      }
-      
-      (sale.paymentMethods || []).forEach((method, methodIndex) => {
-        if (!method || typeof method !== 'object') {
-          return; // Skip invalid payment methods
-        }
-        
-        if (['dinheiro', 'pix', 'cartao_debito'].includes(method.type) || 
-            (method.type === 'cartao_credito' && (!method.installments || method.installments === 1))) {
-          receivedValues.push({
-            id: `sale-${sale.id}-${methodIndex}`,
-            date: sale.date,
-            type: 'Venda',
-            description: `Venda - ${sale.client}`,
-            paymentMethod: method.type.replace('_', ' ').toUpperCase(),
-            amount: Number(method.amount) || 0,
-            details: {
-              saleId: sale.id,
-              client: sale.client,
-              products: sale.products,
-              totalSaleValue: Number(sale.totalValue) || 0,
-              seller: sale.sellerId ? employees.find(e => e.id === sale.sellerId)?.name : 'N/A'
-            }
-          });
-        }
+      (sale.paymentMethods || []).forEach((m: any) => {
+        const k = PM_LABELS[m.type] ?? m.type;
+        map[k] = (map[k] ?? 0) + safeNumber(m.amount, 0);
       });
     });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [periodSales]);
 
-    // Checks compensated in period
-    checks.forEach(check => {
-      if (!check || typeof check !== 'object') {
-        return; // Skip invalid checks
-      }
-      
-      if (check.dueDate >= filters.startDate && check.dueDate <= filters.endDate && check.status === 'compensado') {
-        receivedValues.push({
-          id: `check-${check.id}`,
-          date: check.dueDate,
-          type: 'Cheque',
-          description: `Cheque compensado - ${check.client}`,
-          paymentMethod: 'CHEQUE',
-          amount: Number(check.value) || 0,
-          details: {
-            checkId: check.id,
-            client: check.client,
-            dueDate: check.dueDate,
-            installment: check.installmentNumber && check.totalInstallments ? 
-              `${check.installmentNumber}/${check.totalInstallments}` : 'Único',
-            usedFor: check.usedFor,
-            isOwnCheck: check.isOwnCheck
-          }
-        });
-      }
+  const salesByClient = useMemo(() => {
+    const map: Record<string, number> = {};
+    periodSales.forEach(sale => {
+      map[sale.client] = (map[sale.client] ?? 0) + safeNumber(sale.totalValue, 0);
     });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, value]) => ({ name, value }));
+  }, [periodSales]);
 
-    // Boletos paid in period
-    boletos.forEach(boleto => {
-      if (!boleto || typeof boleto !== 'object') {
-        return; // Skip invalid boletos
-      }
-      
-      if (boleto.dueDate >= filters.startDate && boleto.dueDate <= filters.endDate && boleto.status === 'compensado') {
-        const finalAmount = Number(boleto.finalAmount) || Number(boleto.value) || 0;
-        const notaryCosts = Number(boleto.notaryCosts) || 0;
-        const netReceived = finalAmount - notaryCosts;
-        
-        receivedValues.push({
-          id: `boleto-${boleto.id}`,
-          date: boleto.dueDate,
-          type: 'Boleto',
-          description: `Boleto pago - ${boleto.client}`,
-          paymentMethod: 'BOLETO',
-          amount: netReceived,
-          details: {
-            boletoId: boleto.id,
-            client: boleto.client,
-            originalValue: Number(boleto.value) || 0,
-            finalAmount: finalAmount,
-            notaryCosts: notaryCosts,
-            installment: `${boleto.installmentNumber}/${boleto.totalInstallments}`,
-            overdueAction: boleto.overdueAction
-          }
-        });
-      }
-    });
+  // ── SECTION 4: Receivables ────────────────────────────────────────────────
 
-    // Period debts
-    const periodDebts = debts.filter(debt => 
-      debt.date >= filters.startDate && debt.date <= filters.endDate
-    );
+  const pendingAcertos = useMemo(() =>
+    acertos.filter(a => a.type === 'cliente' && a.status !== 'pago' && safeNumber(a.pendingAmount, 0) > 0)
+      .sort((a, b) => safeNumber(b.pendingAmount, 0) - safeNumber(a.pendingAmount, 0)),
+    [acertos]);
 
-    // Calculate paid values
-    const paidValues = [];
+  const overdueChecks = useMemo(() => {
+    const today = getCurrentDateISO();
+    return checks.filter(c => !c.isOwnCheck && c.status === 'pendente' && c.dueDate < today && !c.usedInDebt)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  }, [checks]);
 
-    // Paid debts in period
-    periodDebts.forEach(debt => {
-      if (!debt || typeof debt !== 'object') {
-        return; // Skip invalid debts
-      }
-      
-      if (debt.isPaid) {
-        if (!debt.paymentMethods || !Array.isArray(debt.paymentMethods)) {
-          return; // Skip debts without valid payment methods
-        }
-        
-        (debt.paymentMethods || []).forEach((method, methodIndex) => {
-          if (!method || typeof method !== 'object') {
-            return; // Skip invalid payment methods
-          }
-          
-          if (['dinheiro', 'pix', 'cartao_debito', 'transferencia'].includes(method.type)) {
-            paidValues.push({
-              id: `debt-${debt.id}-${methodIndex}`,
-              date: debt.date,
-              type: 'Dívida',
-              description: `Pagamento - ${debt.company}`,
-              paymentMethod: method.type.replace('_', ' ').toUpperCase(),
-              amount: Number(method.amount) || 0,
-              details: {
-                debtId: debt.id,
-                company: debt.company,
-                description: debt.description,
-                totalDebtValue: Number(debt.totalValue) || 0,
-                paidAmount: Number(debt.paidAmount) || 0,
-                pendingAmount: Number(debt.pendingAmount) || 0
-              }
-            });
-          }
-        });
-      }
-    });
+  const upcomingChecks = useMemo(() => {
+    const today = getCurrentDateISO();
+    return checks.filter(c => !c.isOwnCheck && c.status === 'pendente' && c.dueDate >= today && !c.usedInDebt)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 15);
+  }, [checks]);
 
-    // Employee payments in period
-    employeePayments.forEach(payment => {
-      if (!payment || typeof payment !== 'object') {
-        return; // Skip invalid payments
-      }
-      
-      if (payment.paymentDate >= filters.startDate && payment.paymentDate <= filters.endDate) {
-        const employee = employees.find(e => e.id === payment.employeeId);
-        paidValues.push({
-          id: `employee-payment-${payment.id}`,
-          date: payment.paymentDate,
-          type: 'Salário',
-          description: `Pagamento de salário - ${employee?.name || 'Funcionário'}`,
-          paymentMethod: 'DINHEIRO',
-          amount: Number(payment.amount) || 0,
-          details: {
-            employeeId: payment.employeeId,
-            employeeName: employee?.name,
-            position: employee?.position,
-            observations: payment.observations,
-            receipt: payment.receipt
-          }
-        });
-      }
-    });
+  // ── SECTION 5: Payables ───────────────────────────────────────────────────
 
-    // PIX fees in period
-    pixFees.forEach(fee => {
-      if (!fee || typeof fee !== 'object') {
-        return; // Skip invalid fees
-      }
-      
-      if (fee.date >= filters.startDate && fee.date <= filters.endDate) {
-        paidValues.push({
-          id: `pix-fee-${fee.id}`,
-          date: fee.date,
-          type: 'Tarifa PIX',
-          description: `Tarifa PIX - ${fee.bank}`,
-          paymentMethod: 'PIX',
-          amount: Number(fee.amount) || 0,
-          details: {
-            bank: fee.bank,
-            transactionType: fee.transactionType,
-            description: fee.description,
-            relatedTransactionId: fee.relatedTransactionId
-          }
-        });
-      }
-    });
+  const pendingDebts = useMemo(() =>
+    debts.filter(d => !d.isPaid && safeNumber(d.pendingAmount, 0) > 0.01)
+      .sort((a, b) => safeNumber(b.pendingAmount, 0) - safeNumber(a.pendingAmount, 0)),
+    [debts]);
 
-    // Calculate totals
-    const totalSales = periodSales.reduce((sum, sale) => sum + (Number(sale.totalValue) || 0), 0);
-    const totalReceived = receivedValues.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-    const totalDebts = periodDebts.reduce((sum, debt) => sum + (Number(debt.totalValue) || 0), 0);
-    const totalPaid = paidValues.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  // ── SECTION 6: Credit Card ────────────────────────────────────────────────
+  // Installments from cash_transactions with category recebimento_cartao or acerto_cliente
 
-    return {
-      sales: periodSales,
-      receivedValues: receivedValues.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-      debts: periodDebts,
-      paidValues: paidValues.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-      totals: {
-        sales: totalSales,
-        received: totalReceived,
-        debts: totalDebts,
-        paid: totalPaid,
-        cashBalance: Number(cashBalance?.currentBalance) || 0
-      }
-    };
-  }, [sales, debts, checks, boletos, employees, employeePayments, pixFees, cashBalance, filters]);
+  // ── SECTION 7: Monthly Comparisons ───────────────────────────────────────
 
-  // Chart data for financial flow
-  const flowChartData = useMemo(() => {
-    const last30Days = [];
+  const monthlyComparisons = useMemo(() => {
     const today = new Date();
-    
-    for (let i = 29; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      
-      // Sales for this day
-      const daySales = sales.filter(sale => sale.date === dateStr);
-      const salesValue = daySales.reduce((sum, sale) => sum + sale.totalValue, 0);
-      
-      // Debts for this day
-      const dayDebts = debts.filter(debt => debt.date === dateStr);
-      const debtsValue = dayDebts.reduce((sum, debt) => sum + debt.totalValue, 0);
-      
-      last30Days.push({
-        date: date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
-        vendas: salesValue,
-        dividas: debtsValue,
-        lucro: salesValue - debtsValue
-      });
+    const result = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const start = `${y}-${m}-01`;
+      const endD = new Date(y, d.getMonth() + 1, 0);
+      const end = `${y}-${m}-${String(endD.getDate()).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+      const revenue  = cashTransactions.filter(t => t.date >= start && t.date <= end && t.type === 'entrada').reduce((s, t) => s + safeNumber(t.amount, 0), 0);
+      const expenses = cashTransactions.filter(t => t.date >= start && t.date <= end && t.type === 'saida').reduce((s, t) => s + safeNumber(t.amount, 0), 0);
+      result.push({ label, revenue, expenses, profit: revenue - expenses });
     }
-    
-    return last30Days;
-  }, [sales, debts]);
+    return result;
+  }, [cashTransactions]);
 
-  if (loading) {
+  // ── SECTION 8: Check Management ──────────────────────────────────────────
+
+  const checkStats = useMemo(() => {
+    const received = checks.filter(c => !c.isOwnCheck);
+    const issued   = checks.filter(c => c.isOwnCheck || c.isCompanyPayable);
+    const groupByStatus = (arr: typeof checks) => ({
+      pendente:    arr.filter(c => c.status === 'pendente').reduce((s, c) => s + c.value, 0),
+      compensado:  arr.filter(c => c.status === 'compensado').reduce((s, c) => s + c.value, 0),
+      devolvido:   arr.filter(c => c.status === 'devolvido').reduce((s, c) => s + c.value, 0),
+    });
+    return {
+      received: { list: received, ...groupByStatus(received) },
+      issued:   { list: issued,   ...groupByStatus(issued) },
+    };
+  }, [checks]);
+
+  // ── EXPORT ─────────────────────────────────────────────────────────────────
+
+  const handleExportPDF = async () => {
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(reportRef.current!, { scale: 1.5, useCORS: true });
+      const imgData = canvas.toDataURL('image/png');
+      const win = window.open('', '_blank');
+      if (!win) { alert('Permita popups para exportar PDF.'); return; }
+      win.document.write(`<html><head><title>Relatório</title><style>body{margin:0}img{max-width:100%}</style></head><body><img src="${imgData}" /></body></html>`);
+      win.document.close();
+      win.onload = () => { win.print(); };
+    } catch { alert('Erro ao exportar PDF.'); }
+  };
+
+  const handleExportXLSX = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      // Sales sheet
+      const salesData = periodSales.map(s => ({
+        Data: formatDateBR(s.date), Cliente: s.client,
+        Total: s.totalValue, Recebido: s.receivedAmount, Pendente: s.pendingAmount,
+        Status: s.status,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(salesData), 'Vendas');
+      // Transactions sheet
+      const txData = cashTransactions.filter(t => inRange(t.date)).map(t => ({
+        Data: formatDateBR(t.date), Tipo: t.type, Categoria: t.category,
+        Descrição: t.description, Valor: t.amount,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txData), 'Caixa');
+      XLSX.writeFile(wb, `relatorio-${filters.startDate}-${filters.endDate}.xlsx`);
+    } catch { alert('Erro ao exportar Excel.'); }
+  };
+
+  // ── RENDER ─────────────────────────────────────────────────────────────────
+
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      <div className="flex items-center justify-center min-h-96">
+        <div className="w-12 h-12 bg-blue-600 rounded-full animate-pulse flex items-center justify-center mx-auto">
+          <BarChart3 className="w-6 h-6 text-white" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-600 to-purple-700 shadow-xl">
-            <FileText className="w-8 h-8 text-white" />
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-600 shadow-lg">
+            <BarChart3 className="w-7 h-7 text-white" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">Relatórios Financeiros</h1>
-            <p className="text-slate-600 text-lg">Análise completa do desempenho financeiro</p>
+            <h1 className="text-2xl font-bold text-slate-900">Relatórios</h1>
+            <p className="text-slate-500 text-sm">Painel de inteligência financeira</p>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm">
+            <Calendar className="w-4 h-4 text-slate-400" />
+            <input type="date" value={filters.startDate}
+              onChange={e => setFilters(p => ({ ...p, startDate: e.target.value }))}
+              className="text-sm border-none outline-none bg-transparent w-32" />
+            <span className="text-slate-400 text-sm">—</span>
+            <input type="date" value={filters.endDate}
+              onChange={e => setFilters(p => ({ ...p, endDate: e.target.value }))}
+              className="text-sm border-none outline-none bg-transparent w-32" />
+          </div>
+          <button onClick={handleExportXLSX}
+            className="btn-secondary flex items-center gap-2 text-sm py-2">
+            <Download className="w-4 h-4" /> Excel
+          </button>
+          <button onClick={handleExportPDF}
+            className="btn-secondary flex items-center gap-2 text-sm py-2">
+            <FileText className="w-4 h-4" /> PDF
+          </button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="card modern-shadow-xl">
-        <div className="flex items-center gap-4 mb-6">
-          <Filter className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-bold text-slate-900">Filtros do Relatório</h3>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="form-label">Data Inicial</label>
-            <input
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
-              className="input-field"
-            />
-          </div>
-          
-          <div>
-            <label className="form-label">Data Final</label>
-            <input
-              type="date"
-              value={filters.endDate}
-              onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
-              className="input-field"
-            />
-          </div>
-          
-          <div>
-            <label className="form-label">Status</label>
-            <select
-              value={filters.status}
-              onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
-              className="input-field"
-            >
-              <option value="all">Todos</option>
-              <option value="pago">Pago</option>
-              <option value="pendente">Pendente</option>
-              <option value="parcial">Parcial</option>
-            </select>
-          </div>
-          
-          <div>
-            <label className="form-label">Tipo de Relatório</label>
-            <select
-              value={filters.reportType}
-              onChange={(e) => setFilters(prev => ({ ...prev, reportType: e.target.value as 'summary' | 'comprehensive' }))}
-              className="input-field"
-            >
-              <option value="comprehensive">Completo (Recomendado)</option>
-              <option value="summary">Resumo</option>
-            </select>
-          </div>
-          
-          <div className="flex items-end">
-            <ExportButtons filters={filters} data={reportData} />
-          </div>
-        </div>
+      {/* Section Nav */}
+      <div className="flex gap-1 overflow-x-auto pb-1 modern-scrollbar">
+        {SECTIONS.map(s => (
+          <button key={s.id} onClick={() => setActiveSection(s.id)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${
+              activeSection === s.id
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'bg-white text-slate-600 border border-slate-200 hover:border-blue-300'
+            }`}>
+            <s.icon className="w-3.5 h-3.5" />
+            {s.label}
+          </button>
+        ))}
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="card bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 modern-shadow-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-green-600">
-              <DollarSign className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-green-900 text-lg">Vendas</h3>
-              <p className="text-3xl font-black text-green-700">
-                R$ {reportData.totals.sales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-sm text-green-600 font-semibold">
-                {reportData.sales.length} venda(s)
-              </p>
-            </div>
-          </div>
-        </div>
+      <div ref={reportRef}>
 
-        <div className="card bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200 modern-shadow-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-emerald-600">
-              <TrendingUp className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-emerald-900 text-lg">Recebido</h3>
-              <p className="text-3xl font-black text-emerald-700">
-                R$ {reportData.totals.received.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-sm text-emerald-600 font-semibold">
-                Entradas efetivas
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-gradient-to-br from-red-50 to-red-100 border-red-200 modern-shadow-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-red-600">
-              <TrendingDown className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-red-900 text-lg">Pago</h3>
-              <p className="text-3xl font-black text-red-700">
-                R$ {reportData.totals.paid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-sm text-red-600 font-semibold">
-                Saídas efetivas
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 modern-shadow-xl">
-          <div className="flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-blue-600">
-              <Activity className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h3 className="font-bold text-blue-900 text-lg">Resultado</h3>
-              <p className={`text-3xl font-black ${
-                (reportData.totals.received - reportData.totals.paid) >= 0 ? 'text-green-700' : 'text-red-700'
-              }`}>
-                {(reportData.totals.received - reportData.totals.paid) >= 0 ? '+' : ''}R$ {(reportData.totals.received - reportData.totals.paid).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-sm text-blue-600 font-semibold">
-                Recebido - Pago
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-
-
-
-
-      {/* Report Content */}
-      {filters.reportType === 'comprehensive' ? (
-        <ComprehensiveReport filters={filters} />
-      ) : (
-        <>
-          {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Financial Flow Chart */}
-            <div className="card modern-shadow-xl">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-blue-600">
-                  <BarChart3 className="w-6 h-6 text-white" />
+        {/* ── SECTION 1: Summary ─────────────────────────────────────────── */}
+        {activeSection === 'summary' && (
+          <div className="space-y-6">
+            {/* KPI row */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: 'Entradas no Período', value: summary.revenue, color: 'emerald', icon: ArrowUpCircle },
+                { label: 'Saídas no Período',   value: summary.expenses, color: 'red', icon: ArrowDownCircle },
+                { label: 'Resultado Líquido',   value: summary.net, color: summary.net >= 0 ? 'blue' : 'orange', icon: Activity },
+                { label: 'A Receber (Total)',   value: summary.pendingReceivables, color: 'sky', icon: Clock },
+              ].map(k => (
+                <div key={k.label} className={`card bg-${k.color}-50 border-${k.color}-100 p-5`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-xl bg-${k.color}-600 shrink-0`}>
+                      <k.icon className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase">{k.label}</p>
+                      <p className={`text-xl font-black text-${k.color}-700`}>{fmtBRL(k.value)}</p>
+                    </div>
+                  </div>
                 </div>
-                <h3 className="text-xl font-bold text-slate-900">Fluxo Financeiro (30 dias)</h3>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: 'Vendas no Período',  value: summary.salesTotal,       sub: `${periodSales.length} vendas` },
+                { label: 'Dívidas no Período', value: summary.debtsTotal,       sub: `${periodDebts.length} dívidas` },
+                { label: 'Cheques Pendentes',  value: summary.pendingChecks,    sub: `${checks.filter(c => !c.isOwnCheck && c.status === 'pendente').length} cheques` },
+                { label: 'Boletos Pendentes',  value: summary.pendingBoletos,   sub: `${boletos.filter(b => b.status === 'pendente').length} boletos` },
+              ].map(k => (
+                <div key={k.label} className="card p-5 bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-500 uppercase mb-1">{k.label}</p>
+                  <p className="text-lg font-black text-slate-800">{fmtBRL(k.value)}</p>
+                  <p className="text-xs text-slate-500 mt-1">{k.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Top clients table */}
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Users className="w-4 h-4 text-blue-500" /> Top Clientes no Período
+              </h3>
+              <div className="space-y-2">
+                {salesByClient.slice(0, 8).map((c, i) => (
+                  <div key={c.name} className="flex items-center gap-3">
+                    <span className="w-5 text-xs text-slate-400 font-bold">{i + 1}</span>
+                    <div className="flex-1">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="font-medium text-slate-700 truncate">{c.name}</span>
+                        <span className="font-bold text-slate-800 shrink-0 ml-2">{fmtBRL(c.value)}</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full"
+                          style={{ width: `${(c.value / salesByClient[0].value) * 100}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {salesByClient.length === 0 && <p className="text-slate-400 text-sm text-center py-4">Nenhuma venda no período.</p>}
               </div>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={flowChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip 
-                    formatter={(value, name) => [
-                      `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-                      name === 'vendas' ? 'Vendas' : name === 'dividas' ? 'Dívidas' : 'Lucro'
-                    ]}
-                    labelFormatter={(label) => `Data: ${label}`}
-                  />
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 2: Cash Flow ──────────────────────────────────────── */}
+        {activeSection === 'cashflow' && (
+          <div className="space-y-6">
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4">Fluxo de Caixa Diário</h3>
+              {cashFlowData.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">Nenhuma transação no período.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <ComposedChart data={cashFlowData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(v: number) => fmtBRL(v)} />
+                    <Legend />
+                    <Bar dataKey="entrada" name="Entradas" fill="#10b981" radius={[3,3,0,0]} />
+                    <Bar dataKey="saida"   name="Saídas"   fill="#ef4444" radius={[3,3,0,0]} />
+                    <Line dataKey="saldo" name="Saldo" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            {/* Transaction breakdown */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="card">
+                <h4 className="font-semibold text-emerald-800 mb-3 flex items-center gap-2">
+                  <ArrowUpCircle className="w-4 h-4" /> Entradas por Categoria
+                </h4>
+                <div className="space-y-2">
+                  {Object.entries(
+                    periodTxIn.reduce((acc, t) => {
+                      acc[t.category] = (acc[t.category] ?? 0) + t.amount;
+                      return acc;
+                    }, {} as Record<string, number>)
+                  ).sort((a, b) => b[1] - a[1]).map(([cat, val]) => (
+                    <div key={cat} className="flex justify-between text-sm">
+                      <span className="text-slate-600">{cat}</span>
+                      <span className="font-semibold text-emerald-700">{fmtBRL(val)}</span>
+                    </div>
+                  ))}
+                  {periodTxIn.length === 0 && <p className="text-slate-400 text-sm">Nenhuma entrada.</p>}
+                </div>
+              </div>
+
+              <div className="card">
+                <h4 className="font-semibold text-red-800 mb-3 flex items-center gap-2">
+                  <ArrowDownCircle className="w-4 h-4" /> Saídas por Categoria
+                </h4>
+                <div className="space-y-2">
+                  {Object.entries(
+                    periodTxOut.reduce((acc, t) => {
+                      acc[t.category] = (acc[t.category] ?? 0) + t.amount;
+                      return acc;
+                    }, {} as Record<string, number>)
+                  ).sort((a, b) => b[1] - a[1]).map(([cat, val]) => (
+                    <div key={cat} className="flex justify-between text-sm">
+                      <span className="text-slate-600">{cat}</span>
+                      <span className="font-semibold text-red-700">{fmtBRL(val)}</span>
+                    </div>
+                  ))}
+                  {periodTxOut.length === 0 && <p className="text-slate-400 text-sm">Nenhuma saída.</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 3: Sales Analysis ─────────────────────────────────── */}
+        {activeSection === 'sales' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="card">
+                <h3 className="font-bold text-slate-800 mb-4">Vendas por Método de Pagamento</h3>
+                {salesByMethod.length === 0
+                  ? <p className="text-slate-400 text-sm text-center py-8">Nenhuma venda no período.</p>
+                  : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <RechartsPieChart>
+                        <Pie data={salesByMethod} cx="50%" cy="50%" outerRadius={100} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                          {salesByMethod.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: number) => fmtBRL(v)} />
+                      </RechartsPieChart>
+                    </ResponsiveContainer>
+                  )
+                }
+              </div>
+              <div className="card">
+                <h3 className="font-bold text-slate-800 mb-4">Top Clientes</h3>
+                {salesByClient.length === 0
+                  ? <p className="text-slate-400 text-sm text-center py-8">Nenhuma venda no período.</p>
+                  : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={salesByClient} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={80} />
+                        <Tooltip formatter={(v: number) => fmtBRL(v)} />
+                        <Bar dataKey="value" name="Valor" fill="#3b82f6" radius={[0,3,3,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )
+                }
+              </div>
+            </div>
+
+            {/* Sales table */}
+            <div className="card overflow-hidden">
+              <h3 className="font-bold text-slate-800 mb-4">Vendas no Período ({periodSales.length})</h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Data</th>
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Cliente</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Total</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Recebido</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Pendente</th>
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {periodSales.slice(0, 50).map(s => (
+                      <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-2 text-slate-700">{formatDateBR(s.date)}</td>
+                        <td className="px-4 py-2 font-medium text-slate-800">{s.client}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-slate-800">{fmtBRL(s.totalValue)}</td>
+                        <td className="px-4 py-2 text-right text-emerald-700">{fmtBRL(s.receivedAmount)}</td>
+                        <td className="px-4 py-2 text-right text-red-600">{fmtBRL(s.pendingAmount)}</td>
+                        <td className="px-4 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                            s.status === 'pago' ? 'bg-emerald-100 text-emerald-800' :
+                            s.status === 'parcial' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-red-100 text-red-800'
+                          }`}>{s.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {periodSales.length === 0 && <p className="text-slate-400 text-sm text-center py-8">Nenhuma venda no período.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 4: Receivables ────────────────────────────────────── */}
+        {activeSection === 'receivables' && (
+          <div className="space-y-6">
+            {/* Pending acertos */}
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-500" />
+                Acertos Pendentes ({pendingAcertos.length})
+                <span className="ml-auto font-black text-amber-700">{fmtBRL(pendingAcertos.reduce((s, a) => s + a.pendingAmount, 0))}</span>
+              </h3>
+              <div className="space-y-2">
+                {pendingAcertos.map(a => (
+                  <div key={a.id} className="flex justify-between items-center p-3 bg-amber-50 rounded-lg border border-amber-100">
+                    <div>
+                      <p className="font-semibold text-slate-800">{a.clientName}</p>
+                      <p className="text-xs text-slate-500">Total: {fmtBRL(a.totalAmount)} • Pago: {fmtBRL(a.paidAmount)}</p>
+                    </div>
+                    <p className="font-black text-amber-700">{fmtBRL(a.pendingAmount)}</p>
+                  </div>
+                ))}
+                {pendingAcertos.length === 0 && <p className="text-slate-400 text-sm text-center py-4">Nenhum acerto pendente.</p>}
+              </div>
+            </div>
+
+            {/* Overdue checks */}
+            {overdueChecks.length > 0 && (
+              <div className="card border border-red-200">
+                <h3 className="font-bold text-red-800 mb-4 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  Cheques Vencidos ({overdueChecks.length})
+                  <span className="ml-auto font-black text-red-700">{fmtBRL(overdueChecks.reduce((s, c) => s + c.value, 0))}</span>
+                </h3>
+                <div className="space-y-2">
+                  {overdueChecks.map(c => (
+                    <div key={c.id} className="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-100">
+                      <div>
+                        <p className="font-semibold text-slate-800">{c.client}</p>
+                        <p className="text-xs text-red-600">Venceu: {formatDateBR(c.dueDate)}</p>
+                      </div>
+                      <p className="font-black text-red-700">{fmtBRL(c.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upcoming checks */}
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-blue-500" />
+                Próximos Cheques a Receber ({upcomingChecks.length})
+                <span className="ml-auto font-black text-blue-700">{fmtBRL(upcomingChecks.reduce((s, c) => s + c.value, 0))}</span>
+              </h3>
+              <div className="space-y-2">
+                {upcomingChecks.map(c => (
+                  <div key={c.id} className="flex justify-between items-center p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <div>
+                      <p className="font-semibold text-slate-800">{c.client}</p>
+                      <p className="text-xs text-slate-500">Vence: {formatDateBR(c.dueDate)}</p>
+                    </div>
+                    <p className="font-black text-blue-700">{fmtBRL(c.value)}</p>
+                  </div>
+                ))}
+                {upcomingChecks.length === 0 && <p className="text-slate-400 text-sm text-center py-4">Nenhum cheque a receber.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 5: Payables ───────────────────────────────────────── */}
+        {activeSection === 'payables' && (
+          <div className="space-y-6">
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <ArrowDownCircle className="w-4 h-4 text-red-500" />
+                Dívidas Pendentes ({pendingDebts.length})
+                <span className="ml-auto font-black text-red-700">
+                  {fmtBRL(pendingDebts.reduce((s, d) => s + safeNumber(d.pendingAmount, 0), 0))}
+                </span>
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Empresa</th>
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Descrição</th>
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Data</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Total</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Pendente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingDebts.map(d => (
+                      <tr key={d.id} className="border-b border-slate-100 hover:bg-red-50">
+                        <td className="px-4 py-2 font-medium text-slate-800">{d.company}</td>
+                        <td className="px-4 py-2 text-slate-600 max-w-xs truncate">{d.description}</td>
+                        <td className="px-4 py-2 text-slate-600">{formatDateBR(d.date)}</td>
+                        <td className="px-4 py-2 text-right text-slate-700">{fmtBRL(d.totalValue)}</td>
+                        <td className="px-4 py-2 text-right font-bold text-red-700">{fmtBRL(safeNumber(d.pendingAmount, 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {pendingDebts.length === 0 && <p className="text-slate-400 text-sm text-center py-8">Nenhuma dívida pendente.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 6: Credit Card ────────────────────────────────────── */}
+        {activeSection === 'creditcard' && (
+          <div className="space-y-6">
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-sky-500" /> Transações de Cartão de Crédito
+              </h3>
+              <p className="text-slate-500 text-sm mb-4">Recebimentos de cartão registrados no caixa no período.</p>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Data</th>
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Descrição</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashTransactions.filter(t =>
+                      inRange(t.date) && t.category === 'recebimento_cartao'
+                    ).sort((a, b) => b.date.localeCompare(a.date)).map(t => (
+                      <tr key={t.id} className="border-b border-slate-100 hover:bg-sky-50">
+                        <td className="px-4 py-2 text-slate-700">{formatDateBR(t.date)}</td>
+                        <td className="px-4 py-2 text-slate-600">{t.description}</td>
+                        <td className="px-4 py-2 text-right font-bold text-sky-700">{fmtBRL(t.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {cashTransactions.filter(t => inRange(t.date) && t.category === 'recebimento_cartao').length === 0 &&
+                  <p className="text-slate-400 text-sm text-center py-8">Nenhum recebimento de cartão no período.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── SECTION 7: Comparisons ────────────────────────────────────── */}
+        {activeSection === 'comparisons' && (
+          <div className="space-y-6">
+            <div className="card">
+              <h3 className="font-bold text-slate-800 mb-4">Evolução Mensal (12 meses)</h3>
+              <ResponsiveContainer width="100%" height={340}>
+                <ComposedChart data={monthlyComparisons}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => fmtBRL(v)} />
                   <Legend />
-                  <Bar dataKey="vendas" fill="#10b981" name="Vendas" />
-                  <Bar dataKey="dividas" fill="#ef4444" name="Dívidas" />
-                  <Line dataKey="lucro" stroke="#3b82f6" strokeWidth={3} name="Lucro" />
-                </BarChart>
+                  <Bar dataKey="revenue"  name="Entradas"  fill="#10b981" radius={[3,3,0,0]} />
+                  <Bar dataKey="expenses" name="Saídas"    fill="#ef4444" radius={[3,3,0,0]} />
+                  <Line dataKey="profit"  name="Resultado" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Payment Methods Distribution */}
-            <div className="card modern-shadow-xl">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-purple-600">
-                  <PieChart className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900">Métodos de Pagamento</h3>
+            <div className="card overflow-hidden">
+              <h3 className="font-bold text-slate-800 mb-4">Tabela Mensal Detalhada</h3>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="px-4 py-2 text-left font-semibold text-slate-600">Mês</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Entradas</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Saídas</th>
+                      <th className="px-4 py-2 text-right font-semibold text-slate-600">Resultado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyComparisons.map(row => (
+                      <tr key={row.label} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-2 font-medium text-slate-700">{row.label}</td>
+                        <td className="px-4 py-2 text-right text-emerald-700">{fmtBRL(row.revenue)}</td>
+                        <td className="px-4 py-2 text-right text-red-600">{fmtBRL(row.expenses)}</td>
+                        <td className={`px-4 py-2 text-right font-bold ${row.profit >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
+                          {fmtBRL(row.profit)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              {paymentMethodsData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Pie
-                      data={paymentMethodsData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percentage }) => `${name}: ${percentage}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {paymentMethodsData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-                  </RechartsPieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="text-center py-12">
-                  <PieChart className="w-16 h-16 mx-auto mb-4 text-slate-300" />
-                  <p className="text-slate-500 font-medium">Nenhum dado de pagamento disponível</p>
-                  <p className="text-slate-400 text-sm mt-2">
-                    Dados aparecerão aqui conforme as vendas forem registradas
-                  </p>
-                </div>
-              )}
+            </div>
           </div>
-          </div>
+        )}
 
-          {/* Valores a Receber */}
-          <EnhancedReceivablesReport />
-
-          {/* Valores a Pagar */}
-          <PayablesReport />
-
-          {/* Detailed Tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Received Values */}
-            <div className="card modern-shadow-xl">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-green-600">
-                  <TrendingUp className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900">Valores Recebidos</h3>
+        {/* ── SECTION 8: Check Management ───────────────────────────────── */}
+        {activeSection === 'checks' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Received checks */}
+            <div className="card">
+              <h3 className="font-bold text-emerald-800 mb-4 flex items-center gap-2">
+                <ArrowUpCircle className="w-4 h-4" />
+                Cheques Recebidos ({checkStats.received.list.length})
+              </h3>
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {[
+                  { label: 'Pendente', value: checkStats.received.pendente, color: 'yellow' },
+                  { label: 'Compensado', value: checkStats.received.compensado, color: 'emerald' },
+                  { label: 'Devolvido', value: checkStats.received.devolvido, color: 'red' },
+                ].map(s => (
+                  <div key={s.label} className={`p-3 bg-${s.color}-50 rounded-xl text-center`}>
+                    <p className={`text-xs font-semibold text-${s.color}-700`}>{s.label}</p>
+                    <p className={`font-black text-${s.color}-800 text-sm`}>{fmtBRL(s.value)}</p>
+                  </div>
+                ))}
               </div>
-              
-              <div className="space-y-3 max-h-80 overflow-y-auto modern-scrollbar">
-                {reportData.receivedValues.slice(0, 10).map(item => (
-                  <div key={item.id} className="p-4 bg-green-50 rounded-xl border border-green-200">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                            item.type === 'Venda' ? 'bg-blue-100 text-blue-800' :
-                            item.type === 'Cheque' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-cyan-100 text-cyan-800'
-                          }`}>
-                            {item.type}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-green-900">{item.details.client}</h4>
-                        <p className="text-sm text-green-700">{item.description}</p>
-                        <p className="text-xs text-green-600">
-                          {new Date(item.date).toLocaleDateString('pt-BR')}
-                        </p>
-                      </div>
-                      <span className="text-lg font-bold text-green-700">
-                        R$ {item.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <div className="space-y-1 max-h-80 overflow-y-auto modern-scrollbar">
+                {checkStats.received.list.slice(0, 30).map(c => (
+                  <div key={c.id} className="flex justify-between text-sm p-2 hover:bg-slate-50 rounded">
+                    <div>
+                      <p className="font-medium text-slate-800">{c.client}</p>
+                      <p className="text-xs text-slate-500">Vence: {formatDateBR(c.dueDate)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-slate-800">{fmtBRL(c.value)}</p>
+                      <span className={`text-xs ${c.status === 'compensado' ? 'text-emerald-600' : c.status === 'devolvido' ? 'text-red-500' : 'text-yellow-600'}`}>
+                        {c.status}
                       </span>
                     </div>
                   </div>
                 ))}
+                {checkStats.received.list.length === 0 && <p className="text-slate-400 text-sm text-center py-4">Nenhum cheque recebido.</p>}
               </div>
             </div>
 
-            {/* Paid Values */}
-            <div className="card modern-shadow-xl">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="p-3 rounded-xl bg-red-600">
-                  <TrendingDown className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900">Valores Pagos</h3>
+            {/* Issued checks */}
+            <div className="card">
+              <h3 className="font-bold text-red-800 mb-4 flex items-center gap-2">
+                <ArrowDownCircle className="w-4 h-4" />
+                Cheques Emitidos ({checkStats.issued.list.length})
+              </h3>
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                {[
+                  { label: 'Pendente', value: checkStats.issued.pendente, color: 'yellow' },
+                  { label: 'Compensado', value: checkStats.issued.compensado, color: 'emerald' },
+                  { label: 'Devolvido', value: checkStats.issued.devolvido, color: 'red' },
+                ].map(s => (
+                  <div key={s.label} className={`p-3 bg-${s.color}-50 rounded-xl text-center`}>
+                    <p className={`text-xs font-semibold text-${s.color}-700`}>{s.label}</p>
+                    <p className={`font-black text-${s.color}-800 text-sm`}>{fmtBRL(s.value)}</p>
+                  </div>
+                ))}
               </div>
-              
-              <div className="space-y-3 max-h-80 overflow-y-auto modern-scrollbar">
-                {reportData.paidValues.slice(0, 10).map(item => (
-                  <div key={item.id} className="p-4 bg-red-50 rounded-xl border border-red-200">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                            item.type === 'Dívida' ? 'bg-red-100 text-red-800' :
-                            item.type === 'Salário' ? 'bg-blue-100 text-blue-800' :
-                            'bg-purple-100 text-purple-800'
-                          }`}>
-                            {item.type}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-red-900">
-                          {item.details.company || item.details.employeeName || item.details.bank}
-                        </h4>
-                        <p className="text-sm text-red-700">{item.description}</p>
-                        <p className="text-xs text-red-600">
-                          {new Date(item.date).toLocaleDateString('pt-BR')}
-                        </p>
-                      </div>
-                      <span className="text-lg font-bold text-red-700">
-                        R$ {item.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <div className="space-y-1 max-h-80 overflow-y-auto modern-scrollbar">
+                {checkStats.issued.list.slice(0, 30).map(c => (
+                  <div key={c.id} className="flex justify-between text-sm p-2 hover:bg-slate-50 rounded">
+                    <div>
+                      <p className="font-medium text-slate-800">{c.companyName ?? c.client}</p>
+                      <p className="text-xs text-slate-500">Vence: {formatDateBR(c.dueDate)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-slate-800">{fmtBRL(c.value)}</p>
+                      <span className={`text-xs ${c.status === 'compensado' ? 'text-emerald-600' : c.status === 'devolvido' ? 'text-red-500' : 'text-yellow-600'}`}>
+                        {c.status}
                       </span>
                     </div>
                   </div>
                 ))}
+                {checkStats.issued.list.length === 0 && <p className="text-slate-400 text-sm text-center py-4">Nenhum cheque emitido.</p>}
               </div>
             </div>
           </div>
-        </>
-      )}
+        )}
+
+      </div>
     </div>
   );
 }

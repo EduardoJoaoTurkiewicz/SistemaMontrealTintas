@@ -373,15 +373,37 @@ export class InstallmentService {
             await this.createBoletosForDebt(debtId, company, method);
           } else {
             // Single boleto
-            await this.createBoletosForDebt(debtId, company, { 
-              ...method, 
-              installments: 1, 
+            await this.createBoletosForDebt(debtId, company, {
+              ...method,
+              installments: 1,
               installmentValue: method.amount,
               firstInstallmentDate: method.firstInstallmentDate || getCurrentDateString()
             });
           }
         }
-        
+
+        // Handle credit card installments for debts
+        if (method.type === 'cartao_credito') {
+          const installments = safeNumber(method.installments, 1);
+          if (installments > 1) {
+            try {
+              const { CreditCardService } = await import('./creditCardService');
+              await CreditCardService.createFromDebt({
+                debtId,
+                supplierName: company,
+                totalAmount:  safeNumber(method.amount, 0),
+                installments,
+                purchaseDate:   getCurrentDateString(),
+                firstDueDate:   method.firstInstallmentDate || getCurrentDateString(),
+              });
+            } catch (ccError) {
+              console.error(`❌ Error creating credit card installments for debt ${debtId}:`, ccError);
+              throw ccError;
+            }
+          }
+          // Single installment credit card is counted as immediate payment in calculateAmounts
+        }
+
         // Handle acertos
         if (method.type === 'acerto') {
           await this.createAcertoForDebt(company, method);

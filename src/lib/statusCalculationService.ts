@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { safeNumber } from '../utils/numberUtils';
+import { getCurrentDateISO } from './dateOnly';
 import type { Check, Boleto } from '../types';
 
 export interface SaleStatusResult {
@@ -168,9 +169,10 @@ export class StatusCalculationService {
     if (debt.isPaid || pending <= 0.01) return 'pago';
 
     // Check for overdue unpaid installments using today's date
-    const today = new Date().toISOString().split('T')[0];
+    // Customer checks (saleId set) are excluded — they are assets used as payment, not liabilities
+    const today = getCurrentDateISO();
     if (debt.id) {
-      const debtChecks = checks.filter(c => c.debtId === debt.id);
+      const debtChecks = checks.filter(c => c.debtId === debt.id && !c.saleId);
       const debtBoletos = boletos.filter(b => b.debtId === debt.id);
       const hasOverdue =
         debtChecks.some(c => c.status !== 'compensado' && c.dueDate < today) ||

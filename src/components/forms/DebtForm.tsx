@@ -606,7 +606,71 @@ export function DebtForm({ debt, onSubmit, onCancel }: DebtFormProps) {
                          )}
                        </>
                      )}
-                     
+
+                     {method.type === 'cartao_credito' && (
+                       <>
+                         <div>
+                           <label className="form-label">Número de Parcelas</label>
+                           <input
+                             type="number"
+                             min="1"
+                             max="48"
+                             value={safeNumber(method.installments, 1)}
+                             onChange={(e) => updatePaymentMethod(index, 'installments', safeNumber(e.target.value, 1))}
+                             className="input-field"
+                             placeholder="1"
+                           />
+                         </div>
+
+                         {safeNumber(method.installments, 1) > 1 && (
+                           <>
+                             <div>
+                               <label className="form-label">Valor por Parcela</label>
+                               <input
+                                 type="text"
+                                 readOnly
+                                 value={`R$ ${(safeNumber(method.amount, 0) / safeNumber(method.installments, 1)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
+                                 className="input-field bg-slate-50 text-slate-600"
+                               />
+                             </div>
+
+                             <div>
+                               <label className="form-label">Intervalo (dias)</label>
+                               <input
+                                 type="number"
+                                 min="1"
+                                 value={safeNumber(method.installmentInterval, 30)}
+                                 onChange={(e) => updatePaymentMethod(index, 'installmentInterval', safeNumber(e.target.value, 30))}
+                                 className="input-field"
+                                 placeholder="30"
+                               />
+                             </div>
+                           </>
+                         )}
+
+                         <div>
+                           <label className="form-label">Data da Primeira Parcela</label>
+                           <input
+                             type="date"
+                             value={method.firstInstallmentDate || formData.date}
+                             onChange={(e) => updatePaymentMethod(index, 'firstInstallmentDate', e.target.value)}
+                             className="input-field"
+                           />
+                         </div>
+
+                         <div className="md:col-span-2">
+                           <div className="p-3 bg-sky-50 rounded-xl border border-sky-200">
+                             <p className="text-sm text-sky-800">
+                               {safeNumber(method.installments, 1) > 1
+                                 ? `${safeNumber(method.installments, 1)}x de R$ ${(safeNumber(method.amount, 0) / safeNumber(method.installments, 1)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — As parcelas serão gerenciadas na aba Cartão de Crédito.`
+                                 : 'Pagamento à vista no cartão — será registrado como pago imediatamente.'
+                               }
+                             </p>
+                           </div>
+                         </div>
+                       </>
+                     )}
+
                      {method.type === 'acerto' && (
                        <div className="md:col-span-2">
                          <div className="p-4 bg-red-50 rounded-xl border border-red-200">

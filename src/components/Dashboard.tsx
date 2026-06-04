@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { getCurrentDateString } from '../utils/dateUtils';
+import { formatDateBR } from '../lib/dateOnly';
+import { safeNumber } from '../utils/numberUtils';
 import { getFullGreeting } from '../utils/greetingUtils';
 import {
   DollarSign,
@@ -217,7 +219,7 @@ const Dashboard: React.FC = () => {
 
   // Dívidas para pagar
   const debtsToPay = useMemo(() => {
-    return debts.filter(debt => !debt.isPaid);
+    return debts.filter(debt => !debt.isPaid && safeNumber(debt.pendingAmount, 0) > 0.01);
   }, [debts]);
 
   // Valores a receber - MOSTRA SOMENTE VENDAS COM VALORES PENDENTES
@@ -226,75 +228,10 @@ const Dashboard: React.FC = () => {
 
     // Processar SOMENTE vendas com valores pendentes
     sales.forEach(sale => {
-      // Calcular quanto já foi efetivamente recebido desta venda
-      let receivedAmount = 0;
-
-      // 1. Pagamentos instantâneos (já recebidos no momento da venda)
-      (sale.paymentMethods || []).forEach(method => {
-        if (['dinheiro', 'pix', 'cartao_debito'].includes(method.type)) {
-          receivedAmount += method.amount;
-        }
-        // Crédito à vista também é recebido imediatamente
-        if (method.type === 'cartao_credito' && (!method.installments || method.installments === 1)) {
-          receivedAmount += method.amount;
-        }
-        // Permuta é tratada como recebida (troca de produto, não dinheiro)
-        if (method.type === 'permuta') {
-          receivedAmount += method.amount;
-        }
-        // Acerto também é tratado como recebido (será cobrado no acerto mensal)
-        if (method.type === 'acerto') {
-          receivedAmount += method.amount;
-        }
-      });
-
-      // 1b. Parcelas de cartão de crédito parcelado recebidas (via cash_transactions)
-      // Para cada pagamento de cartão de crédito parcelado desta venda, somamos o que
-      // já entrou no caixa como 'recebimento_cartao' associado a esta venda via data e cliente
-      const hasMultiInstallmentCC = (sale.paymentMethods || []).some(
-        (m: any) => m.type === 'cartao_credito' && m.installments && m.installments > 1
-      );
-      if (hasMultiInstallmentCC) {
-        cashTransactions.forEach((tx: any) => {
-          if (
-            tx.category === 'recebimento_cartao' &&
-            tx.type === 'entrada' &&
-            tx.description &&
-            tx.description.includes(sale.client)
-          ) {
-            receivedAmount += tx.amount;
-          }
-        });
-      }
-
-      // 2. Cheques desta venda que foram EFETIVAMENTE RECEBIDOS (não pendentes)
-      checks.forEach(check => {
-        if (check.saleId === sale.id) {
-          if (check.status === 'compensado') {
-            // Compensado = valor recebido
-            receivedAmount += check.value;
-          } else if (check.is_discounted && check.discounted_amount) {
-            // Antecipado = valor líquido recebido (descontado juros)
-            receivedAmount += check.discounted_amount;
-          } else if (check.usedInDebt) {
-            // Usado em dívida = considera como recebido
-            receivedAmount += check.value;
-          }
-          // NÃO conta cheques pendentes - eles ainda não foram recebidos!
-        }
-      });
-
-      // 3. Boletos desta venda que foram EFETIVAMENTE RECEBIDOS (não pendentes)
-      boletos.forEach(boleto => {
-        if (boleto.saleId === sale.id && boleto.status === 'compensado') {
-          // Depositado = valor recebido
-          receivedAmount += boleto.value;
-        }
-        // NÃO conta boletos pendentes - eles ainda não foram recebidos!
-      });
-
-      // Calcular quanto ainda falta receber (valor total - valor já recebido)
-      const pendingAmount = Math.max(sale.totalValue - receivedAmount, 0);
+      // pending_amount is the authoritative value — maintained by financialCoreService
+      // updateSaleStatusProportional keeps it in sync after every payment event.
+      const pendingAmount = Math.max(safeNumber(sale.pendingAmount, 0), 0);
+      const receivedAmount = safeNumber(sale.receivedAmount, 0);
 
       // Só adiciona a venda se ainda houver valor pendente para receber
       if (pendingAmount > 0.01) { // Usa 0.01 para evitar problemas de arredondamento
@@ -366,7 +303,7 @@ const Dashboard: React.FC = () => {
 
     // Ordenar por data de vencimento
     return toReceive.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-  }, [checks, boletos, sales, cashTransactions]);
+  }, [checks, boletos, sales]);
 
   // Dados para gráfico de fluxo financeiro (30 dias)
   const flowChartData = useMemo(() => {
@@ -765,7 +702,7 @@ const Dashboard: React.FC = () => {
                     R$ {boleto.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
                   <p className="text-sm text-red-700">
-                    Venceu em {new Date(boleto.dueDate).toLocaleDateString('pt-BR')}
+                    Venceu em {formatDateBR(boleto.dueDate)}
                   </p>
                 </div>
               );
@@ -798,7 +735,7 @@ const Dashboard: React.FC = () => {
                     <h4 className="font-bold text-red-900">{debt.company}</h4>
                     <p className="text-sm text-red-700">{debt.description}</p>
                     <p className="text-xs text-red-600">
-                      {new Date(debt.date).toLocaleDateString('pt-BR')}
+                      {formatDateBR(debt.date)}
                     </p>
                   </div>
                   <div className="text-right">
@@ -867,7 +804,7 @@ const Dashboard: React.FC = () => {
                       </p>
                     </div>
                     <p className="text-xs text-blue-600 mt-2">
-                      Próximo vencimento: {new Date(item.dueDate).toLocaleDateString('pt-BR')}
+                      Próximo vencimento: {formatDateBR(item.dueDate)}
                     </p>
                   </div>
                   <div className="text-right ml-4">

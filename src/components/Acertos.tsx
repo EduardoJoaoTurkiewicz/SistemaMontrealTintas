@@ -30,15 +30,20 @@ export function Acertos() {
   const [negotiatingAcerto, setNegotiatingAcerto] = useState<Acerto | null>(null);
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
   const [expandedCompanies, setExpandedCompanies] = useState<Set<string>>(new Set());
+  const [showPaid, setShowPaid] = useState(false);
 
-  // Separar acertos por tipo
+  // Separar acertos por tipo — ocultar pagos por padrão
   const clientAcertos = useMemo(() => {
-    return acertos.filter(acerto => acerto.type === 'cliente');
-  }, [acertos]);
+    return acertos.filter(acerto =>
+      acerto.type === 'cliente' && (showPaid || acerto.status !== 'pago')
+    );
+  }, [acertos, showPaid]);
 
   const companyAcertos = useMemo(() => {
-    return acertos.filter(acerto => acerto.type === 'empresa');
-  }, [acertos]);
+    return acertos.filter(acerto =>
+      acerto.type === 'empresa' && (showPaid || acerto.status !== 'pago')
+    );
+  }, [acertos, showPaid]);
 
   // Calcular totais
   const totals = useMemo(() => {
@@ -206,13 +211,21 @@ export function Acertos() {
             <p className="text-slate-600 text-lg">Pagamentos mensais de clientes e negociações com fornecedores</p>
           </div>
         </div>
-        <button
-          onClick={() => setIsFormOpen(true)}
-          className="btn-primary flex items-center gap-2 modern-shadow-xl hover:modern-shadow-lg"
-        >
-          <Plus className="w-5 h-5" />
-          Novo Acerto de Empresa
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowPaid(v => !v)}
+            className={`btn-secondary flex items-center gap-2 text-sm ${showPaid ? 'ring-2 ring-green-400' : ''}`}
+          >
+            {showPaid ? 'Ocultar pagos' : 'Mostrar pagos'}
+          </button>
+          <button
+            onClick={() => setIsFormOpen(true)}
+            className="btn-primary flex items-center gap-2 modern-shadow-xl hover:modern-shadow-lg"
+          >
+            <Plus className="w-5 h-5" />
+            Novo Acerto de Empresa
+          </button>
+        </div>
       </div>
 
       {/* Error Display */}

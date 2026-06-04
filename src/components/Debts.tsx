@@ -22,6 +22,7 @@ import { DebtForm } from './forms/DebtForm';
 import { DeduplicationService } from '../lib/deduplicationService';
 import { UUIDManager } from '../lib/uuidManager';
 import { dbDateToDisplay, getCurrentDateString } from '../utils/dateUtils';
+import { getCurrentDateISO } from '../lib/dateOnly';
 import { StatusCalculationService } from '../lib/statusCalculationService';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ interface ConfirmPayModalProps {
 }
 
 function ConfirmPayModal({ installment, onConfirm, onCancel, isProcessing }: ConfirmPayModalProps) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getCurrentDateISO();
   const isOverdue = installment.dueDate < today && installment.status !== 'compensado';
 
   return (
@@ -223,7 +224,8 @@ export function Debts() {
   const getDebtInstallments = (debtId: string): PendingInstallment[] => {
     const company = debts.find(d => d.id === debtId)?.company ?? '';
     const fromChecks: PendingInstallment[] = checks
-      .filter(c => c.debtId === debtId)
+      // Exclude customer checks used to pay this debt — they are assets, not liabilities
+      .filter(c => c.debtId === debtId && !c.saleId)
       .map(c => ({
         type: 'check' as const,
         id: c.id,
@@ -330,7 +332,7 @@ export function Debts() {
     );
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getCurrentDateISO();
 
   return (
     <div className="space-y-8">
