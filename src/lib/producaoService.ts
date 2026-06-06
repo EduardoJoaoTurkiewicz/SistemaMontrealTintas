@@ -28,18 +28,20 @@ function toCamelCaseItem(row: any): ProducaoItemCompleto {
     nomeProduto: row.estoque_produtos?.nome ?? '',
     nomeVariacao: row.estoque_variacoes?.nome_variacao ?? '',
     nomeCor: row.estoque_cores?.nome_cor ?? undefined,
+    validadeMeses: row.estoque_variacoes?.validade_meses ?? 24,
   };
 }
 
 export const producaoService = {
   async gerarProximoLote(data: Date): Promise<string> {
-    const dateStr = toDate(data).replace(/-/g, '');
-    const prefix = `MT-${dateStr}-`;
+    const year = data.getFullYear().toString();
+    const prefix = `${year}-`;
 
     const { data: rows, error } = await supabase
       .from('producoes')
       .select('lote')
       .like('lote', `${prefix}%`)
+      .not('lote', 'like', 'MT-%')
       .order('lote', { ascending: false })
       .limit(1);
 
@@ -72,7 +74,7 @@ export const producaoService = {
       .select(`
         *,
         estoque_produtos(nome),
-        estoque_variacoes(nome_variacao),
+        estoque_variacoes(nome_variacao, validade_meses),
         estoque_cores(nome_cor)
       `)
       .in('producao_id', ids);
@@ -94,8 +96,23 @@ export const producaoService = {
     itens: { produtoId: string; variacaoId: string; corId?: string; quantidade: number }[]
   ): Promise<ProducaoCompleta> {
     const fabricacaoStr = toDate(fabricacaoDate);
+
+    // Fetch validadeMeses from the first item's variacao (all items in a batch share the same product line)
+    let validadeMeses = 24;
+    if (itens.length > 0) {
+      const variacaoIds = [...new Set(itens.map(i => i.variacaoId))];
+      const { data: variacoes } = await supabase
+        .from('estoque_variacoes')
+        .select('validade_meses')
+        .in('id', variacaoIds)
+        .limit(1);
+      if (variacoes && variacoes.length > 0) {
+        validadeMeses = variacoes[0].validade_meses ?? 24;
+      }
+    }
+
     const validadeDate = new Date(fabricacaoDate);
-    validadeDate.setFullYear(validadeDate.getFullYear() + 2);
+    validadeDate.setMonth(validadeDate.getMonth() + validadeMeses);
     const validadeStr = toDate(validadeDate);
 
     const { data: producao, error: prodError } = await supabase
@@ -154,7 +171,7 @@ export const producaoService = {
       .select(`
         *,
         estoque_produtos(nome),
-        estoque_variacoes(nome_variacao),
+        estoque_variacoes(nome_variacao, validade_meses),
         estoque_cores(nome_cor)
       `)
       .eq('producao_id', producao.id);

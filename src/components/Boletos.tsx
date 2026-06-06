@@ -38,12 +38,24 @@ export function Boletos() {
       .filter(sale => boletos.some(boleto => boleto.saleId === sale.id))
       .map(sale => ({
         ...sale,
-        boletos: boletos.filter(boleto => boleto.saleId === sale.id)
+        boletos: boletos.filter(boleto => boleto.saleId === sale.id),
+        pendingBoletos: boletos.filter(boleto => boleto.saleId === sale.id && boleto.status !== 'compensado'),
+        compensatedBoletos: boletos.filter(boleto => boleto.saleId === sale.id && boleto.status === 'compensado'),
       }));
   }, [sales, boletos]);
 
+  // Sales with at least one pending/active boleto
+  const salesWithPendingBoletos = useMemo(() => {
+    return salesWithBoletos.filter(s => s.pendingBoletos.length > 0);
+  }, [salesWithBoletos]);
+
+  // Sales with at least one compensated boleto (for "Boletos Recebidos" section)
+  const salesWithCompensatedBoletos = useMemo(() => {
+    return salesWithBoletos.filter(s => s.compensatedBoletos.length > 0);
+  }, [salesWithBoletos]);
+
   const filteredSalesWithBoletos = useMemo(() => {
-    return salesWithBoletos.filter(sale => {
+    return salesWithPendingBoletos.filter(sale => {
       const matchesSearch = receivableSearch.trim() === '' ||
         sale.client?.toLowerCase().includes(receivableSearch.toLowerCase()) ||
         sale.boletos.some(b => b.client?.toLowerCase().includes(receivableSearch.toLowerCase()));
@@ -62,7 +74,7 @@ export function Boletos() {
 
       return matchesSearch && matchesFilter;
     });
-  }, [salesWithBoletos, receivableSearch, receivableFilter, today]);
+  }, [salesWithPendingBoletos, receivableSearch, receivableFilter, today]);
 
   const receivableSummary = useMemo(() => {
     const allReceivableBoletos = boletos.filter(b => b.saleId && b.status === 'pendente');
@@ -78,9 +90,21 @@ export function Boletos() {
       .filter(debt => boletos.some(boleto => boleto.debtId === debt.id))
       .map(debt => ({
         ...debt,
-        boletos: boletos.filter(boleto => boleto.debtId === debt.id)
+        boletos: boletos.filter(boleto => boleto.debtId === debt.id),
+        pendingBoletos: boletos.filter(boleto => boleto.debtId === debt.id && boleto.status !== 'compensado'),
+        paidBoletos: boletos.filter(boleto => boleto.debtId === debt.id && boleto.status === 'compensado'),
       }));
   }, [debts, boletos]);
+
+  // Debts with pending boletos (for "A Pagar")
+  const debtsWithPendingBoletos = useMemo(() => {
+    return debtsWithBoletos.filter(d => d.pendingBoletos.length > 0);
+  }, [debtsWithBoletos]);
+
+  // Debts with paid boletos (for "Boletos Pagos" section)
+  const debtsWithPaidBoletos = useMemo(() => {
+    return debtsWithBoletos.filter(d => d.paidBoletos.length > 0);
+  }, [debtsWithBoletos]);
 
   const handleAddBoleto = (boleto: Omit<Boleto, 'id' | 'createdAt'>) => {
     createBoleto(boleto).then(() => {

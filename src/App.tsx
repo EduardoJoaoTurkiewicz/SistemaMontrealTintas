@@ -37,6 +37,7 @@ import Producao from './components/Producao';
 import ProductionLabelsPrint from './components/print/ProductionLabelsPrint';
 import { ClientesPage } from './components/ClientesPage';
 import { Orcamentos } from './components/Orcamentos';
+import { Fornecedores } from './components/Fornecedores';
 
 function App() {
   return (
@@ -132,6 +133,8 @@ function renderPage(currentPage: string) {
       return <Producao />;
     case 'clientes':
       return <ClientesPage />;
+    case 'fornecedores':
+      return <Fornecedores />;
     case 'orcamentos':
       return <Orcamentos />;
     default:

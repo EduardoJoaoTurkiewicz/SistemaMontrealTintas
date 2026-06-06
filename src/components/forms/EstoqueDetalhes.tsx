@@ -39,14 +39,14 @@ const EstoqueDetalhes: React.FC<EstoqueDetalhesProps> = ({
   const [editingCorId, setEditingCorId] = useState<string | null>(null);
   const [editingCorValue, setEditingCorValue] = useState('');
   const [editingVarId, setEditingVarId] = useState<string | null>(null);
-  const [editingVar, setEditingVar] = useState<{ nomeVariacao: string; valorUnitarioPadrao: string; descricao: string }>({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '' });
+  const [editingVar, setEditingVar] = useState<{ nomeVariacao: string; valorUnitarioPadrao: string; descricao: string; validadeMeses: string }>({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '', validadeMeses: '24' });
   const [editingSaldoId, setEditingSaldoId] = useState<string | null>(null);
   const [editingSaldoValue, setEditingSaldoValue] = useState('');
 
   const [addingCor, setAddingCor] = useState(false);
   const [novaCorValue, setNovaCorValue] = useState('');
   const [addingVar, setAddingVar] = useState(false);
-  const [novaVar, setNovaVar] = useState({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '' });
+  const [novaVar, setNovaVar] = useState({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '', validadeMeses: '24' });
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'cor' | 'variacao' | 'produto'; id: string; label: string } | null>(null);
@@ -78,7 +78,8 @@ const EstoqueDetalhes: React.FC<EstoqueDetalhesProps> = ({
         variacao.id,
         editingVar.nomeVariacao.trim(),
         Number(editingVar.valorUnitarioPadrao) || 0,
-        editingVar.descricao.trim() || undefined
+        editingVar.descricao.trim() || undefined,
+        Number(editingVar.validadeMeses) || 24
       );
       setEditingVarId(null);
     } catch (err: any) {
@@ -145,9 +146,10 @@ const EstoqueDetalhes: React.FC<EstoqueDetalhesProps> = ({
         produto.id,
         novaVar.nomeVariacao.trim(),
         Number(novaVar.valorUnitarioPadrao) || 0,
-        novaVar.descricao.trim() || undefined
+        novaVar.descricao.trim() || undefined,
+        Number(novaVar.validadeMeses) || 24
       );
-      setNovaVar({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '' });
+      setNovaVar({ nomeVariacao: '', valorUnitarioPadrao: '', descricao: '', validadeMeses: '24' });
       setAddingVar(false);
     } catch (err: any) {
       showError(err.message);
@@ -390,6 +392,7 @@ const EstoqueDetalhes: React.FC<EstoqueDetalhesProps> = ({
                                     nomeVariacao: variacao.nomeVariacao,
                                     valorUnitarioPadrao: String(variacao.valorUnitarioPadrao),
                                     descricao: variacao.descricao || '',
+                                    validadeMeses: String(variacao.validadeMeses ?? 24),
                                   });
                                 }}
                                 className="p-1.5 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"

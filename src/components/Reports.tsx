@@ -53,6 +53,7 @@ export default function Reports() {
   const [filters, setFilters] = useState({
     startDate: getMonthStart(),
     endDate: getCurrentDateISO(),
+    hasNotaFiscal: 'all' as 'all' | 'com' | 'sem',
   });
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -60,10 +61,16 @@ export default function Reports() {
   const inRange = (dateStr: string) =>
     dateStr >= filters.startDate && dateStr <= filters.endDate;
 
+  const matchesNF = (hasNF: boolean | undefined) => {
+    if (filters.hasNotaFiscal === 'all') return true;
+    if (filters.hasNotaFiscal === 'com') return !!hasNF;
+    return !hasNF;
+  };
+
   // ── period data ──────────────────────────────────────────────────────────
 
-  const periodSales  = useMemo(() => sales.filter(s => inRange(s.date)), [sales, filters]);
-  const periodDebts  = useMemo(() => debts.filter(d => inRange(d.date)), [debts, filters]);
+  const periodSales  = useMemo(() => sales.filter(s => inRange(s.date) && matchesNF(s.hasNotaFiscal)), [sales, filters]);
+  const periodDebts  = useMemo(() => debts.filter(d => inRange(d.date) && matchesNF(d.hasNotaFiscal)), [debts, filters]);
   const periodTxIn   = useMemo(() => cashTransactions.filter(t => inRange(t.date) && t.type === 'entrada'), [cashTransactions, filters]);
   const periodTxOut  = useMemo(() => cashTransactions.filter(t => inRange(t.date) && t.type === 'saida'), [cashTransactions, filters]);
 
@@ -257,6 +264,15 @@ export default function Reports() {
               onChange={e => setFilters(p => ({ ...p, endDate: e.target.value }))}
               className="text-sm border-none outline-none bg-transparent w-32" />
           </div>
+          <select
+            value={filters.hasNotaFiscal}
+            onChange={e => setFilters(p => ({ ...p, hasNotaFiscal: e.target.value as 'all' | 'com' | 'sem' }))}
+            className="text-sm border border-slate-200 rounded-xl px-3 py-2 bg-white shadow-sm outline-none focus:ring-2 focus:ring-blue-300"
+          >
+            <option value="all">Todas (NF)</option>
+            <option value="com">Com Nota Fiscal</option>
+            <option value="sem">Sem Nota Fiscal</option>
+          </select>
           <button onClick={handleExportXLSX}
             className="btn-secondary flex items-center gap-2 text-sm py-2">
             <Download className="w-4 h-4" /> Excel

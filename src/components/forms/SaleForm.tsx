@@ -61,7 +61,8 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
       customInstallmentValues: method.customInstallmentValues || []
     })),
     paymentDescription: sale?.paymentDescription || '',
-    paymentObservations: sale?.paymentObservations || ''
+    paymentObservations: sale?.paymentObservations || '',
+    hasNotaFiscal: sale?.hasNotaFiscal ?? false
   });
 
   const sellers = employees.filter(emp => emp.isActive && emp.isSeller);
@@ -480,6 +481,7 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
       products: cleanedProducts,
       paymentDescription: !formData.paymentDescription || formData.paymentDescription.trim() === '' ? null : formData.paymentDescription.trim(),
       paymentObservations: !formData.paymentObservations || formData.paymentObservations.trim() === '' ? null : formData.paymentObservations.trim(),
+      hasNotaFiscal: formData.hasNotaFiscal,
       ...amounts
     };
 
@@ -731,6 +733,18 @@ export function SaleForm({ sale, prefillOrcamento, onSubmit, onCancel }: SaleFor
                     rows={2}
                     placeholder="Informacoes adicionais sobre a venda (opcional)"
                   />
+                </div>
+
+                <div className="form-group md:col-span-2">
+                  <label className="flex items-center gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formData.hasNotaFiscal}
+                      onChange={(e) => setFormData(prev => ({ ...prev, hasNotaFiscal: e.target.checked }))}
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="text-sm font-semibold text-slate-700">Possui Nota Fiscal</span>
+                  </label>
                 </div>
 
                 <div className="form-group md:col-span-2">

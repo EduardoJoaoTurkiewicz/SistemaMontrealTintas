@@ -129,9 +129,13 @@ export default function ProductionLabelsPrint() {
   if (!producao) return null;
 
   const etiquetas: React.ReactNode[] = [];
+  let globalIndex = 0;
   itens.forEach(item => {
     const descricao = [item.nomeVariacao, item.nomeCor].filter(Boolean).join(' · ');
     for (let i = 0; i < item.quantidade; i++) {
+      if (globalIndex >= 200) break;
+      globalIndex++;
+      const sublot = `${producao.lote}/B${String(globalIndex).padStart(3, '0')}`;
       etiquetas.push(
         <div key={`${item.id}-${i}`} className="label">
           <div className="label-header">
@@ -142,7 +146,7 @@ export default function ProductionLabelsPrint() {
           <div className="separator" />
           <div className="info-row">
             <span className="info-label">LOTE</span>
-            <span className="info-value lote">{producao.lote}</span>
+            <span className="info-value lote">{sublot}</span>
           </div>
           <div className="info-row">
             <span className="info-label">FAB.</span>
@@ -155,6 +159,7 @@ export default function ProductionLabelsPrint() {
         </div>
       );
     }
+    if (globalIndex >= 200) return;
   });
 
   return (

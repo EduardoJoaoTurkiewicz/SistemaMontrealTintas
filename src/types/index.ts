@@ -78,6 +78,29 @@ export interface EstoqueMovimento {
   createdAt?: string;
 }
 
+// Supplier (Fornecedor) interface
+export interface Fornecedor {
+  id: string;
+  razaoSocial: string;
+  nomeFantasia?: string | null;
+  cnpj?: string | null;
+  inscricaoEstadual?: string | null;
+  telefone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  site?: string | null;
+  endereco?: string | null;
+  cidade?: string | null;
+  estado?: string | null;
+  cep?: string | null;
+  observacoes?: string | null;
+  categoria: 'Matéria-prima' | 'Embalagens' | 'Pigmentos' | 'Resinas' | 'Equipamentos' | 'Serviços' | 'Logística' | 'Outros';
+  status: 'Ativo' | 'Inativo' | 'Bloqueado';
+  classificacao: 'A' | 'B' | 'C';
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Sale interface
 export interface Sale {
   id: string;
@@ -96,6 +119,7 @@ export interface Sale {
   status: 'pago' | 'pendente' | 'parcial';
   paymentDescription?: string | null;
   paymentObservations?: string | null;
+  hasNotaFiscal?: boolean;
   createdAt: string;
   updatedAt?: string | null;
   custom_commission_rate: number;
@@ -107,6 +131,7 @@ export interface Debt {
   date: string;
   description: string;
   company: string;
+  fornecedorId?: string | null; // FK to fornecedores
   totalValue: number;
   paymentMethods: PaymentMethod[];
   isPaid: boolean;
@@ -115,6 +140,7 @@ export interface Debt {
   checksUsed?: string[] | null;
   paymentDescription?: string | null;
   debtPaymentDescription?: string | null;
+  hasNotaFiscal?: boolean;
   createdAt: string;
   updatedAt?: string | null;
 }
@@ -461,6 +487,7 @@ export interface EstoqueVariacao {
   produtoId: string;
   nomeVariacao: string;
   valorUnitarioPadrao: number;
+  validadeMeses: number;
   descricao?: string;
   createdAt: string;
 }
@@ -503,6 +530,7 @@ export interface ProducaoItemCompleto extends ProducaoItem {
   nomeProduto: string;
   nomeVariacao: string;
   nomeCor?: string;
+  validadeMeses?: number;
 }
 
 export interface ProducaoCompleta extends Producao {

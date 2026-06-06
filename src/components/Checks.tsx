@@ -69,27 +69,27 @@ export function Checks() {
     return saleChecks.length > 0;
   }).map(sale => {
     const saleChecks = checks.filter(check => check.saleId === sale.id);
-    const pendingCheckValue = saleChecks
-      .filter(check => check.status !== 'compensado')
-      .reduce((sum, check) => sum + check.value, 0);
+    // A check is "receivable" if: not compensated AND not used for a debt payment
+    const receivableChecks = saleChecks.filter(c => c.status !== 'compensado' && !c.usedInDebt);
+    const pendingCheckValue = receivableChecks.reduce((sum, check) => sum + check.value, 0);
     const compensatedCount = saleChecks.filter(check => check.status === 'compensado').length;
     const allCompensated = saleChecks.length > 0 && compensatedCount === saleChecks.length;
     const someCompensated = compensatedCount > 0 && compensatedCount < saleChecks.length;
-    // Derived check status: use sale.status but also check check-level compensation
     const checkStatus: 'pago' | 'parcial' | 'pendente' = allCompensated ? 'pago' : someCompensated ? 'parcial' : 'pendente';
     return {
       ...sale,
       checks: saleChecks,
+      receivableChecks,
       pendingCheckValue,
       checkStatus,
       allCompensated,
     };
   });
 
-  // "Cheques a Receber" — only sales where NOT all checks are compensated, with filters applied
+  // "Cheques a Receber" — only sales where NOT all receivable checks are gone, with filters applied
   const salesWithChecks = allSalesWithChecks.filter(sale => {
-    // Exclude fully compensated sales — they move to "Depositados"
-    if (sale.allCompensated) return false;
+    // Exclude if no receivable checks remain (all compensated or all used for debts)
+    if (sale.receivableChecks.length === 0) return false;
 
     // Apply receivable filters
     if (receivableFilters.client && !sale.client.toLowerCase().includes(receivableFilters.client.toLowerCase())) {
@@ -112,7 +112,8 @@ export function Checks() {
   });
 
   const debtsWithChecks = debts.filter(debt => {
-    const debtChecks = checks.filter(check => check.debtId === debt.id);
+    // Only show checks that are NOT customer checks (no saleId) and belong to this debt
+    const debtChecks = checks.filter(check => check.debtId === debt.id && !check.saleId);
     if (debtChecks.length === 0) return false;
 
     // Apply payable filters
@@ -135,7 +136,7 @@ export function Checks() {
     return true;
   }).map(debt => ({
     ...debt,
-    checks: checks.filter(check => check.debtId === debt.id)
+    checks: checks.filter(check => check.debtId === debt.id && !check.saleId)
   }));
 
   // Filter used checks — use allSalesWithChecks so fully-compensated sales are still shown here

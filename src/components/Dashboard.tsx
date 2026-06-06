@@ -25,7 +25,8 @@ import {
   Award,
   Building2,
   PieChart,
-  BarChart3
+  BarChart3,
+  FileCheck
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -210,7 +211,21 @@ const Dashboard: React.FC = () => {
     };
   }, [employeeCommissions, employees, sales, currentMonth, currentYear]);
 
-  // Boletos vencidos
+  const nfMetrics = useMemo(() => {
+    const monthlySalesWithNF = sales.filter(s => {
+      const d = new Date(s.date);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear && s.hasNotaFiscal;
+    });
+    const monthlySalesNoNF = sales.filter(s => {
+      const d = new Date(s.date);
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear && !s.hasNotaFiscal;
+    });
+    const nfValue = monthlySalesWithNF.reduce((sum, s) => sum + safeNumber(s.totalValue, 0), 0);
+    const noNFValue = monthlySalesNoNF.reduce((sum, s) => sum + safeNumber(s.totalValue, 0), 0);
+    const totalMonthValue = nfValue + noNFValue;
+    const nfPct = totalMonthValue > 0 ? Math.round((nfValue / totalMonthValue) * 100) : 0;
+    return { nfValue, noNFValue, nfCount: monthlySalesWithNF.length, noNFCount: monthlySalesNoNF.length, nfPct };
+  }, [sales, currentMonth, currentYear]);
   const overdueBoletos = useMemo(() => {
     return boletos.filter(boleto => 
       boleto.dueDate < today && boleto.status === 'pendente'
@@ -666,6 +681,60 @@ const Dashboard: React.FC = () => {
               </p>
               <p className="text-sm text-cyan-600 font-semibold">
                 Salários base
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* NF Indicators */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="card bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200 modern-shadow-xl hover:modern-shadow-lg transition-all duration-300 hover:scale-105">
+          <div className="flex items-center gap-4">
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 modern-shadow-lg">
+              <FileCheck className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-emerald-900 text-lg">Com Nota Fiscal</h3>
+              <p className="text-3xl font-black text-emerald-700">
+                R$ {nfMetrics.nfValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <p className="text-sm text-emerald-600 font-semibold">
+                {nfMetrics.nfCount} venda(s) — {nfMetrics.nfPct}% do mês
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card bg-gradient-to-br from-orange-50 to-amber-50 border-orange-200 modern-shadow-xl hover:modern-shadow-lg transition-all duration-300 hover:scale-105">
+          <div className="flex items-center gap-4">
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-orange-600 to-amber-700 modern-shadow-lg">
+              <FileText className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-orange-900 text-lg">Sem Nota Fiscal</h3>
+              <p className="text-3xl font-black text-orange-700">
+                R$ {nfMetrics.noNFValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <p className="text-sm text-orange-600 font-semibold">
+                {nfMetrics.noNFCount} venda(s) — {100 - nfMetrics.nfPct}% do mês
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card bg-gradient-to-br from-slate-50 to-gray-50 border-slate-200 modern-shadow-xl hover:modern-shadow-lg transition-all duration-300 hover:scale-105">
+          <div className="flex items-center gap-4">
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-600 to-gray-700 modern-shadow-lg">
+              <Activity className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 text-lg">Cobertura NF</h3>
+              <p className="text-3xl font-black text-slate-700">
+                {nfMetrics.nfPct}%
+              </p>
+              <p className="text-sm text-slate-600 font-semibold">
+                Das vendas do mês com NF
               </p>
             </div>
           </div>

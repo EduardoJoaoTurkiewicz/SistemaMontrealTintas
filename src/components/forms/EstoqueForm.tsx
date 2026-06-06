@@ -8,6 +8,7 @@ interface VariacaoInput {
   nomeVariacao: string;
   valorUnitarioPadrao: string;
   descricao: string;
+  validadeMeses: string;
 }
 
 interface EstoqueFormProps {
@@ -35,8 +36,9 @@ const EstoqueForm: React.FC<EstoqueFormProps> = ({ produto, onClose, onSuccess }
           nomeVariacao: v.nomeVariacao,
           valorUnitarioPadrao: String(v.valorUnitarioPadrao),
           descricao: v.descricao || '',
+          validadeMeses: String(v.validadeMeses ?? 24),
         }))
-      : [{ id: crypto.randomUUID(), nomeVariacao: '', valorUnitarioPadrao: '', descricao: '' }]
+      : [{ id: crypto.randomUUID(), nomeVariacao: '', valorUnitarioPadrao: '', descricao: '', validadeMeses: '24' }]
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -72,6 +74,7 @@ const EstoqueForm: React.FC<EstoqueFormProps> = ({ produto, onClose, onSuccess }
           nomeVariacao: v.nomeVariacao.trim(),
           valorUnitarioPadrao: Number(v.valorUnitarioPadrao) || 0,
           descricao: v.descricao.trim() || undefined,
+          validadeMeses: Number(v.validadeMeses) || 24,
         }));
 
       if (isEditing) {
@@ -105,7 +108,7 @@ const EstoqueForm: React.FC<EstoqueFormProps> = ({ produto, onClose, onSuccess }
   const addVariacao = () =>
     setVariacoes(prev => [
       ...prev,
-      { id: crypto.randomUUID(), nomeVariacao: '', valorUnitarioPadrao: '', descricao: '' },
+      { id: crypto.randomUUID(), nomeVariacao: '', valorUnitarioPadrao: '', descricao: '', validadeMeses: '24' },
     ]);
   const removeVariacao = (id: string) => {
     if (variacoes.length <= 1) return;
@@ -311,6 +314,18 @@ const EstoqueForm: React.FC<EstoqueFormProps> = ({ produto, onClose, onSuccess }
                           value={variacao.descricao}
                           onChange={e => updateVariacao(variacao.id, 'descricao', e.target.value)}
                           placeholder="Descricao da variacao..."
+                          className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none text-sm transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-gray-500">Validade (meses)</label>
+                        <input
+                          type="number"
+                          value={variacao.validadeMeses}
+                          onChange={e => updateVariacao(variacao.id, 'validadeMeses', e.target.value)}
+                          placeholder="24"
+                          min="1"
+                          step="1"
                           className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none text-sm transition-all"
                         />
                       </div>

@@ -25,7 +25,7 @@ const PAYMENT_TYPES = [
 ];
 
 export function DebtForm({ debt, onSubmit, onCancel }: DebtFormProps) {
-  const { checks } = useAppContext();
+  const { checks, fornecedores } = useAppContext();
 
   // Get available checks (from sales, not used in debts, not discounted, and status is pending)
   const availableChecks = checks.filter(check =>
@@ -52,7 +52,9 @@ export function DebtForm({ debt, onSubmit, onCancel }: DebtFormProps) {
       selectedChecks: method.selectedChecks || []
     })),
     paymentDescription: debt?.paymentDescription || '',
-    debtPaymentDescription: debt?.debtPaymentDescription || ''
+    debtPaymentDescription: debt?.debtPaymentDescription || '',
+    fornecedorId: debt?.fornecedorId || '',
+    hasNotaFiscal: debt?.hasNotaFiscal ?? false
   });
 
   const addPaymentMethod = () => {
@@ -290,6 +292,8 @@ export function DebtForm({ debt, onSubmit, onCancel }: DebtFormProps) {
       paymentMethods: cleanedPaymentMethods,
       paymentDescription,
       debtPaymentDescription,
+      fornecedorId: formData.fornecedorId || null,
+      hasNotaFiscal: formData.hasNotaFiscal,
       ...amounts
     };
     
@@ -335,6 +339,34 @@ export function DebtForm({ debt, onSubmit, onCancel }: DebtFormProps) {
                   placeholder="Nome da empresa"
                   required
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Fornecedor (opcional)</label>
+                <select
+                  value={formData.fornecedorId}
+                  onChange={(e) => setFormData(prev => ({ ...prev, fornecedorId: e.target.value }))}
+                  className="input-field"
+                >
+                  <option value="">— Nenhum —</option>
+                  {fornecedores.filter(f => f.status === 'Ativo').map(f => (
+                    <option key={f.id} value={f.id}>
+                      {f.nomeFantasia || f.razaoSocial}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group md:col-span-2">
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={formData.hasNotaFiscal}
+                    onChange={(e) => setFormData(prev => ({ ...prev, hasNotaFiscal: e.target.checked }))}
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-sm font-semibold text-slate-700">Possui Nota Fiscal</span>
+                </label>
               </div>
 
               <div className="form-group md:col-span-2">

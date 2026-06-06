@@ -30,6 +30,7 @@ function toCamelCaseVariacao(row: any): EstoqueVariacao {
     nomeVariacao: row.nome_variacao,
     valorUnitarioPadrao: Number(row.valor_unitario_padrao),
     descricao: row.descricao ?? undefined,
+    validadeMeses: row.validade_meses ?? 24,
     createdAt: row.created_at,
   };
 }
@@ -75,7 +76,7 @@ export const estoqueService = {
     descricao: string | undefined,
     temCor: boolean,
     cores: string[],
-    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string }[]
+    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string; validadeMeses?: number }[]
   ): Promise<EstoqueProdutoCompleto> {
     const { data: produto, error: produtoError } = await supabase
       .from('estoque_produtos')
@@ -105,6 +106,7 @@ export const estoqueService = {
             nome_variacao: v.nomeVariacao,
             valor_unitario_padrao: v.valorUnitarioPadrao,
             descricao: v.descricao || null,
+            validade_meses: v.validadeMeses ?? 24,
           }))
         )
         .select();
@@ -165,7 +167,8 @@ export const estoqueService = {
     id: string,
     nomeVariacao: string,
     valorUnitarioPadrao: number,
-    descricao?: string
+    descricao?: string,
+    validadeMeses?: number
   ): Promise<void> {
     const { error } = await supabase
       .from('estoque_variacoes')
@@ -173,6 +176,7 @@ export const estoqueService = {
         nome_variacao: nomeVariacao,
         valor_unitario_padrao: valorUnitarioPadrao,
         descricao: descricao || null,
+        ...(validadeMeses !== undefined && { validade_meses: validadeMeses }),
       })
       .eq('id', id);
     if (error) throw error;
@@ -297,7 +301,8 @@ export const estoqueService = {
     produtoId: string,
     nomeVariacao: string,
     valorUnitarioPadrao: number,
-    descricao?: string
+    descricao?: string,
+    validadeMeses?: number
   ): Promise<void> {
     const { data: variacao, error: varError } = await supabase
       .from('estoque_variacoes')
@@ -306,6 +311,7 @@ export const estoqueService = {
         nome_variacao: nomeVariacao,
         valor_unitario_padrao: valorUnitarioPadrao,
         descricao: descricao || null,
+        validade_meses: validadeMeses ?? 24,
       })
       .select()
       .single();

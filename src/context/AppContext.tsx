@@ -12,7 +12,8 @@ import { producaoService } from '../lib/producaoService';
 import { listarClientes, criarCliente, atualizarCliente, deletarCliente } from '../lib/clienteService';
 import { orcamentoService } from '../lib/orcamentoService';
 import { StatusCalculationService } from '../lib/statusCalculationService';
-import type { EstoqueProdutoCompleto, ProducaoCompleta, Cliente, ClienteFormData, Orcamento, OrcamentoItem } from '../types';
+import { fornecedorService } from '../lib/fornecedorService';
+import type { EstoqueProdutoCompleto, ProducaoCompleta, Cliente, ClienteFormData, Orcamento, OrcamentoItem, Fornecedor } from '../types';
 
 interface AppContextType {
   // Loading and error states
@@ -112,17 +113,17 @@ interface AppContextType {
     descricao: string | undefined,
     temCor: boolean,
     cores: string[],
-    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string }[]
+    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string; validadeMeses?: number }[]
   ) => Promise<EstoqueProdutoCompleto>;
   updateEstoqueProduto: (id: string, nome: string, descricao?: string) => Promise<void>;
-  updateEstoqueVariacao: (id: string, nomeVariacao: string, valorUnitarioPadrao: number, descricao?: string) => Promise<void>;
+  updateEstoqueVariacao: (id: string, nomeVariacao: string, valorUnitarioPadrao: number, descricao?: string, validadeMeses?: number) => Promise<void>;
   updateEstoqueCor: (id: string, nomeCor: string) => Promise<void>;
   removeEstoqueVariacao: (variacaoId: string) => Promise<void>;
   removeEstoqueCor: (corId: string) => Promise<void>;
   deleteEstoqueProduto: (produtoId: string) => Promise<void>;
   updateEstoqueSaldo: (saldoId: string, quantidadeAtual: number) => Promise<void>;
   addEstoqueCor: (produtoId: string, nomeCor: string) => Promise<void>;
-  addEstoqueVariacao: (produtoId: string, nomeVariacao: string, valorUnitarioPadrao: number, descricao?: string) => Promise<void>;
+  addEstoqueVariacao: (produtoId: string, nomeVariacao: string, valorUnitarioPadrao: number, descricao?: string, validadeMeses?: number) => Promise<void>;
 
   // Producao
   producoes: ProducaoCompleta[];
@@ -156,6 +157,14 @@ interface AppContextType {
   // Pending quote-to-sale prefill
   orcamentoPrefill: Orcamento | null;
   setOrcamentoPrefill: (o: Orcamento | null) => void;
+
+  // Fornecedores
+  fornecedores: Fornecedor[];
+  isLoadingFornecedores: boolean;
+  loadFornecedoresData: () => Promise<void>;
+  createFornecedor: (data: Omit<Fornecedor, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Fornecedor>;
+  updateFornecedor: (id: string, data: Partial<Omit<Fornecedor, 'id' | 'createdAt' | 'updatedAt'>>) => Promise<Fornecedor>;
+  deleteFornecedor: (id: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -196,6 +205,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [isLoadingOrcamentos, setIsLoadingOrcamentos] = useState(false);
   const [orcamentoPrefill, setOrcamentoPrefill] = useState<Orcamento | null>(null);
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
+  const [isLoadingFornecedores, setIsLoadingFornecedores] = useState(false);
 
   // Track loading state for each data type to prevent multiple loads
   const [loadingStates, setLoadingStates] = useState<Record<string, boolean>>({});
@@ -1294,7 +1305,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     descricao: string | undefined,
     temCor: boolean,
     cores: string[],
-    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string }[]
+    variacoes: { nomeVariacao: string; valorUnitarioPadrao: number; descricao?: string; validadeMeses?: number }[]
   ): Promise<EstoqueProdutoCompleto> => {
     const result = await estoqueService.createProduto(nome, descricao, temCor, cores, variacoes);
     await loadEstoqueData();
@@ -1310,9 +1321,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     id: string,
     nomeVariacao: string,
     valorUnitarioPadrao: number,
-    descricao?: string
+    descricao?: string,
+    validadeMeses?: number
   ): Promise<void> => {
-    await estoqueService.updateVariacao(id, nomeVariacao, valorUnitarioPadrao, descricao);
+    await estoqueService.updateVariacao(id, nomeVariacao, valorUnitarioPadrao, descricao, validadeMeses);
     await loadEstoqueData();
   };
 
@@ -1350,9 +1362,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     produtoId: string,
     nomeVariacao: string,
     valorUnitarioPadrao: number,
-    descricao?: string
+    descricao?: string,
+    validadeMeses?: number
   ): Promise<void> => {
-    await estoqueService.addVariacao(produtoId, nomeVariacao, valorUnitarioPadrao, descricao);
+    await estoqueService.addVariacao(produtoId, nomeVariacao, valorUnitarioPadrao, descricao, validadeMeses);
     await loadEstoqueData();
   };
 
@@ -1413,7 +1426,36 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     await loadClientesData();
   };
 
-  const value: AppContextType = {
+  const loadFornecedoresData = async (): Promise<void> => {
+    try {
+      setIsLoadingFornecedores(true);
+      const data = await fornecedorService.getAll();
+      setFornecedores(data);
+    } catch (err) {
+      console.error('Error loading fornecedores data:', err);
+    } finally {
+      setIsLoadingFornecedores(false);
+    }
+  };
+
+  const createFornecedor = async (data: Omit<Fornecedor, 'id' | 'createdAt' | 'updatedAt'>): Promise<Fornecedor> => {
+    const result = await fornecedorService.create(data);
+    await loadFornecedoresData();
+    return result;
+  };
+
+  const updateFornecedor = async (id: string, data: Partial<Omit<Fornecedor, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Fornecedor> => {
+    const result = await fornecedorService.update(id, data);
+    await loadFornecedoresData();
+    return result;
+  };
+
+  const deleteFornecedor = async (id: string): Promise<void> => {
+    await fornecedorService.delete(id);
+    await loadFornecedoresData();
+  };
+
+  const value = {
     // Loading and error states
     isLoading,
     setIsLoading,
@@ -1534,6 +1576,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     // Pending quote-to-sale prefill
     orcamentoPrefill,
     setOrcamentoPrefill,
+
+    // Fornecedores
+    fornecedores,
+    isLoadingFornecedores,
+    loadFornecedoresData,
+    createFornecedor,
+    updateFornecedor,
+    deleteFornecedor,
   };
 
   return (
